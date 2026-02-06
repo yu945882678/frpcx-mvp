@@ -1,46 +1,46 @@
 # frpcx (MVP)
 
-A small cross-platform desktop client for frpc with auto-switching profiles and WebDAV sync.
+一个小巧的跨平台桌面 frpc 客户端，支持多配置自动切换与 WebDAV 同步。
 
-## Features
-- Single-window compact UI + system tray menu
-- Multiple profiles (priority by list order)
-- Auto-switch on startup failure or runtime exit
-- WebDAV sync to pull config files (e.g., Jianguoyun)
+## 功能
+- 单窗口轻量 UI + 系统托盘菜单
+- 多 Profile（按列表优先级）
+- 启动失败/运行退出自动切换下一个 Profile
+- WebDAV 同步（可用于坚果云）
 
-## Notes
-- This MVP expects an external `frpc` binary. Set `frpc Path` per profile or ensure `frpc` is in PATH.
-- Configs are stored in the user's config directory under `frpcx/config.json`.
-- WebDAV sync downloads remote configs into `frpcx/cache/` and maps them to profiles.
+## 说明
+- 目前依赖外部 `frpc` 二进制，可在 Profile 中指定 `frpc Path`，或保证系统 PATH 中可找到 `frpc`。
+- 配置文件保存在用户配置目录下：`frpcx/config.json`。
+- WebDAV 同步会将远程配置下载到本地缓存：`frpcx/cache/`，并自动映射到 Profile。
 
-## Build
+## 构建
 ```bash
-# requires Go 1.22+ and Fyne
+# 需要 Go 1.22+ 和 Fyne
 go mod tidy
 GOOS=darwin GOARCH=amd64 go build -o frpcx
 ```
 
-## Single-File Build (embed frpc)
-Place the platform binary under:
-- `internal/frpc/assets/frpc/<goos>_<goarch>/frpc` (or `frpc.exe` on Windows)
-
-Then build with:
-```bash
-go build -tags with_embedded_frpc -o frpcx
-```
-
-## Run
+## 运行
 ```bash
 ./frpcx
 ```
 
-## Auto-switch logic
-- Pre-checks server connectivity (if server addr/port set)
-- Pre-checks local ports (if provided)
-- Starts frpc and parses logs for failure patterns
-- On exit/failure, attempts the next enabled profile
+## 单文件构建（内嵌 frpc）
+将对应平台的 `frpc` 二进制放到：
+- `internal/frpc/assets/frpc/<goos>_<goarch>/frpc`（Windows 为 `frpc.exe`）
 
-## Status Health Check
-- Optional per-profile status check uses `frpc status -c <config>` to verify admin API availability.
-- This requires `webServer` enabled in your frpc config.
-- When enabled, startup waits for status success, and runtime monitor switches after repeated failures.
+然后编译：
+```bash
+go build -tags with_embedded_frpc -o frpcx
+```
+
+## 自动切换逻辑
+- 预检查服务器可达（若设置了 server addr/port）
+- 预检查本地服务端口（若设置）
+- 启动 frpc 并解析日志错误模式
+- 进程退出/失败自动切换下一个 Profile
+
+## 状态健康检查
+- 可选：对每个 Profile 使用 `frpc status -c <config>` 验证管理端口可用性。
+- 需要在 frpc 配置中启用 `webServer`。
+- 启用后，启动阶段会等待 status 成功，运行期定时检查，连续失败会自动切换。
