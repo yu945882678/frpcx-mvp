@@ -25,6 +25,13 @@ GOOS=darwin GOARCH=amd64 go build -o frpcx
 ./frpcx
 ```
 
+## macOS 提示“已损坏/无法打开”
+这是 macOS Gatekeeper 对未签名应用的拦截。将应用拖到“应用程序”后，执行以下命令解除隔离：
+```bash
+xattr -dr com.apple.quarantine /Applications/FRPCX.app
+```
+然后双击即可打开。
+
 ## 单文件构建（内嵌 frpc）
 将对应平台的 `frpc` 二进制放到：
 - `internal/frpc/assets/frpc/<goos>_<goarch>/frpc`（Windows 为 `frpc.exe`）
