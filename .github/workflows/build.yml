@@ -5,10 +5,50 @@ on:
     branches: [ main, master ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 env:
   FRP_VERSION: 0.65.0
 
 jobs:
+  tidy:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Go mod tidy
+        run: |
+          go mod tidy
+
+      - name: Check changes
+        id: diff
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit go.mod/go.sum
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum
+          git commit -m "chore: update go.mod/go.sum"
+          git push
+
   build:
     strategy:
       fail-fast: false
@@ -39,6 +79,8 @@ jobs:
             frp_dir: frp_0.65.0_windows_amd64
             frpc_name: frpc.exe
 
+    needs: tidy
+    if: needs.tidy.outputs.changed != 'true'
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -55,10 +97,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xorg-dev libgl1-mesa-dev
-
-      - name: Go mod tidy
-        run: |
-          go mod tidy
 
       - name: Download frpc (unix)
         if: matrix.goos != 'windows'
