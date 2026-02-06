@@ -20,7 +20,7 @@ jobs:
             frp_archive: frp_0.65.0_linux_amd64.tar.gz
             frp_dir: frp_0.65.0_linux_amd64
             frpc_name: frpc
-          - os: macos-13
+          - os: macos-15-intel
             goos: darwin
             goarch: amd64
             frp_archive: frp_0.65.0_darwin_amd64.tar.gz
