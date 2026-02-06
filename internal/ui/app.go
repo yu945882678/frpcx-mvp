@@ -368,7 +368,7 @@ func (u *App) startStatusTicker() {
     go func() {
         for range ticker.C {
             snap := u.mgr.Status()
-            u.app.QueueUpdate(func() {
+            fyne.Do(func() {
                 u.statusLabel.SetText(snap.Status)
                 if snap.ProfileName == "" {
                     u.profileLabel.SetText("-")
