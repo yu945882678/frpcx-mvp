@@ -122,7 +122,7 @@ jobs:
       - name: Install fyne tool
         if: matrix.goos == 'darwin'
         run: |
-          go install fyne.io/fyne/v2/cmd/fyne@v2.6.0
+          go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build (macOS .app)
         if: matrix.goos == 'darwin'
@@ -132,7 +132,7 @@ jobs:
           CGO_ENABLED: 1
           GOFLAGS: -mod=mod
         run: |
-          fyne package -os darwin -name FRPCX -appID com.frpcx.app -appVersion ${{ github.run_number }} -release
+          fyne package -os darwin -name FRPCX -appID com.frpcx.app -appVersion ${{ github.run_number }} -icon Icon.png -release
           ditto -c -k --sequesterRsrc --keepParent FRPCX.app frpcx-${{ matrix.goos }}-${{ matrix.goarch }}.zip
 
       - name: Build (non-mac)
@@ -140,7 +140,6 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
           GOFLAGS: -mod=mod
         run: |
           go build -tags with_embedded_frpc -o frpcx-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
