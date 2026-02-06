@@ -11,6 +11,7 @@ import (
     "fyne.io/fyne/v2/container"
     "fyne.io/fyne/v2/dialog"
     "fyne.io/fyne/v2/driver/desktop"
+    "fyne.io/fyne/v2/layout"
     "fyne.io/fyne/v2/storage"
     "fyne.io/fyne/v2/widget"
 
@@ -98,11 +99,17 @@ func (u *App) build() {
         widget.NewLabel("健康错误"), u.healthErr,
     )
 
+    statusCard := widget.NewCard("运行状态", "", statusGrid)
+    actionsRow := container.NewGridWithColumns(3, startBtn, stopBtn, syncBtn)
+    toolsRow := container.NewGridWithColumns(2, checkBtn, autoSwitch)
+    actionsCard := widget.NewCard("操作", "", container.NewVBox(actionsRow, toolsRow))
+    logsCard := widget.NewCard("日志", "", u.logEntry)
+
     statusTab := container.NewVBox(
-        statusGrid,
-        container.NewHBox(startBtn, stopBtn, syncBtn, checkBtn, autoSwitch),
-        widget.NewLabel("日志"),
-        u.logEntry,
+        statusCard,
+        actionsCard,
+        logsCard,
+        layout.NewSpacer(),
     )
 
     profilesTab := u.buildProfilesTab()
@@ -202,20 +209,26 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         u.mgr.SetConfig(u.cfg)
     })
 
-    buttons := container.NewHBox(addBtn, editBtn, removeBtn, upBtn, downBtn, setActiveBtn)
+    buttonsMain := container.NewGridWithColumns(4, addBtn, editBtn, removeBtn, setActiveBtn)
+    buttonsOrder := container.NewGridWithColumns(2, upBtn, downBtn)
+    listCard := widget.NewCard("配置列表", "", u.list)
 
-    return container.NewBorder(buttons, nil, nil, nil, u.list)
+    return container.NewVBox(listCard, buttonsMain, buttonsOrder, layout.NewSpacer())
 }
 
 func (u *App) buildWebDAVTab() fyne.CanvasObject {
     urlEntry := widget.NewEntry()
     urlEntry.SetText(u.cfg.WebDAV.URL)
+    urlEntry.SetPlaceHolder("可选，例如 https://dav.jianguoyun.com/dav/")
     userEntry := widget.NewEntry()
     userEntry.SetText(u.cfg.WebDAV.Username)
+    userEntry.SetPlaceHolder("可选")
     passEntry := widget.NewPasswordEntry()
     passEntry.SetText(u.cfg.WebDAV.Password)
+    passEntry.SetPlaceHolder("可选")
     baseEntry := widget.NewEntry()
     baseEntry.SetText(u.cfg.WebDAV.RemoteBase)
+    baseEntry.SetPlaceHolder("可选，例如 /frpc")
 
     saveBtn := widget.NewButton("保存", func() {
         u.cfg.WebDAV.URL = strings.TrimSpace(urlEntry.Text)
@@ -241,7 +254,8 @@ func (u *App) buildWebDAVTab() fyne.CanvasObject {
         OnSubmit:   nil,
     }
 
-    return container.NewVBox(form, container.NewHBox(saveBtn, syncBtn))
+    card := widget.NewCard("WebDAV 设置", "", form)
+    return container.NewVBox(card, container.NewHBox(saveBtn, syncBtn), layout.NewSpacer())
 }
 
 func (u *App) showProfileDialog(title string, existing *config.Profile, onSave func(config.Profile)) {
@@ -259,6 +273,19 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
     statusTimeout := widget.NewEntry()
     statusInterval := widget.NewEntry()
     extraArgs := widget.NewEntry()
+
+    name.SetPlaceHolder("必填，例如 家庭线路")
+    configPath.SetPlaceHolder("必填，例如 /path/frpc.toml")
+    frpcPath.SetPlaceHolder("可选，留空使用内置/系统 frpc")
+    remoteConfig.SetPlaceHolder("可选，WebDAV 远程路径")
+    serverAddr.SetPlaceHolder("可选，例如 1.2.3.4")
+    serverPort.SetPlaceHolder("可选")
+    localPorts.SetPlaceHolder("可选，例 8080,8443")
+    startTimeout.SetPlaceHolder("可选，默认 8")
+    healthTimeout.SetPlaceHolder("可选，默认 5")
+    statusTimeout.SetPlaceHolder("可选，默认 10")
+    statusInterval.SetPlaceHolder("可选，默认 5")
+    extraArgs.SetPlaceHolder("可选，例如 -u token")
 
     if existing != nil {
         name.SetText(existing.Name)
@@ -296,22 +323,40 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
     frpcRow := u.filePickerRow(frpcPath, nil)
     configRow := u.filePickerRow(configPath, storage.NewExtensionFileFilter([]string{".toml", ".ini", ".yaml", ".yml", ".json"}))
 
-    form := dialog.NewForm(title, "保存", "取消", []*widget.FormItem{
-        {Text: "名称", Widget: name},
-        {Text: "启用", Widget: enabled},
-        {Text: "frpc 路径", Widget: frpcRow},
-        {Text: "配置文件", Widget: configRow},
-        {Text: "远程配置", Widget: remoteConfig},
-        {Text: "服务器地址", Widget: serverAddr},
-        {Text: "服务器端口", Widget: serverPort},
-        {Text: "本地端口", Widget: localPorts},
-        {Text: "启动超时(秒)", Widget: startTimeout},
-        {Text: "健康超时(秒)", Widget: healthTimeout},
-        {Text: "状态检查", Widget: requireStatus},
-        {Text: "状态超时(秒)", Widget: statusTimeout},
-        {Text: "状态间隔(秒)", Widget: statusInterval},
-        {Text: "额外参数", Widget: extraArgs},
-    }, func(ok bool) {
+    basicForm := &widget.Form{
+        Items: []*widget.FormItem{
+            {Text: "名称", Widget: name},
+            {Text: "启用", Widget: enabled},
+            {Text: "配置文件（必填）", Widget: configRow},
+        },
+        SubmitText: "",
+        OnSubmit:   nil,
+    }
+
+    advancedForm := &widget.Form{
+        Items: []*widget.FormItem{
+            {Text: "frpc 路径", Widget: frpcRow},
+            {Text: "远程配置", Widget: remoteConfig},
+            {Text: "服务器地址", Widget: serverAddr},
+            {Text: "服务器端口", Widget: serverPort},
+            {Text: "本地端口", Widget: localPorts},
+            {Text: "启动超时(秒)", Widget: startTimeout},
+            {Text: "健康超时(秒)", Widget: healthTimeout},
+            {Text: "状态检查", Widget: requireStatus},
+            {Text: "状态超时(秒)", Widget: statusTimeout},
+            {Text: "状态间隔(秒)", Widget: statusInterval},
+            {Text: "额外参数", Widget: extraArgs},
+        },
+        SubmitText: "",
+        OnSubmit:   nil,
+    }
+
+    advanced := widget.NewAccordion(widget.NewAccordionItem("高级设置（可选）", advancedForm))
+    advanced.CloseAll()
+
+    content := container.NewVBox(basicForm, advanced)
+
+    form := dialog.NewCustomConfirm(title, "保存", "取消", content, func(ok bool) {
         if !ok {
             return
         }
@@ -335,10 +380,14 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
             dialog.ShowError(fmt.Errorf("名称不能为空"), u.win)
             return
         }
+        if p.ConfigPath == "" {
+            dialog.ShowError(fmt.Errorf("配置文件不能为空"), u.win)
+            return
+        }
         onSave(p)
     }, u.win)
 
-    form.Resize(fyne.NewSize(460, 520))
+    form.Resize(fyne.NewSize(480, 520))
     form.Show()
 }
 
