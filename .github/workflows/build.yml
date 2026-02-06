@@ -1,0 +1,81 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+env:
+  FRP_VERSION: 0.65.0
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            frp_archive: frp_0.65.0_linux_amd64.tar.gz
+            frp_dir: frp_0.65.0_linux_amd64
+            frpc_name: frpc
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            frp_archive: frp_0.65.0_darwin_amd64.tar.gz
+            frp_dir: frp_0.65.0_darwin_amd64
+            frpc_name: frpc
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            frp_archive: frp_0.65.0_darwin_arm64.tar.gz
+            frp_dir: frp_0.65.0_darwin_arm64
+            frpc_name: frpc
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            frp_archive: frp_0.65.0_windows_amd64.zip
+            frp_dir: frp_0.65.0_windows_amd64
+            frpc_name: frpc.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download frpc (unix)
+        if: matrix.goos != 'windows'
+        run: |
+          curl -L -o ${{ matrix.frp_archive }} https://github.com/fatedier/frp/releases/download/v${{ env.FRP_VERSION }}/${{ matrix.frp_archive }}
+          tar -xzf ${{ matrix.frp_archive }}
+          mkdir -p internal/frpc/assets/frpc/${{ matrix.goos }}_${{ matrix.goarch }}
+          cp ${{ matrix.frp_dir }}/${{ matrix.frpc_name }} internal/frpc/assets/frpc/${{ matrix.goos }}_${{ matrix.goarch }}/
+
+      - name: Download frpc (windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/fatedier/frp/releases/download/v${{ env.FRP_VERSION }}/${{ matrix.frp_archive }}"
+          Invoke-WebRequest -Uri $url -OutFile ${{ matrix.frp_archive }}
+          Expand-Archive ${{ matrix.frp_archive }} -DestinationPath .
+          New-Item -ItemType Directory -Force -Path internal/frpc/assets/frpc/${{ matrix.goos }}_${{ matrix.goarch }} | Out-Null
+          Copy-Item ${{ matrix.frp_dir }}\${{ matrix.frpc_name }} internal/frpc/assets/frpc/${{ matrix.goos }}_${{ matrix.goarch }}\
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -tags with_embedded_frpc -o frpcx-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
