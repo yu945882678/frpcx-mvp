@@ -12,7 +12,7 @@ import (
 
 func SyncProfiles(cfg *config.AppConfig) (map[string]string, error) {
     if cfg.WebDAV.URL == "" || cfg.WebDAV.Username == "" || cfg.WebDAV.Password == "" {
-        return nil, errors.New("webdav config is incomplete")
+        return nil, errors.New("WebDAV 配置不完整")
     }
 
     client := gowebdav.NewClient(cfg.WebDAV.URL, cfg.WebDAV.Username, cfg.WebDAV.Password)

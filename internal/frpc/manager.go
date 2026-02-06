@@ -98,7 +98,7 @@ func (m *Manager) StartAuto() {
 func (m *Manager) startAutoFromIndex(startIndex int) {
     profiles := enabledProfiles(m.cfg.Profiles)
     if len(profiles) == 0 {
-        m.setError("no enabled profiles")
+        m.setError("没有可用的配置")
         return
     }
 
@@ -118,19 +118,19 @@ func (m *Manager) startAutoFromIndex(startIndex int) {
         tryIndex := (idx + i) % len(profiles)
         p := profiles[tryIndex]
         if err := m.startProfile(&p, tryIndex); err != nil {
-            m.appendLog(fmt.Sprintf("profile '%s' failed: %v", p.Name, err))
+            m.appendLog(fmt.Sprintf("配置“%s”失败: %v", p.Name, err))
             continue
         }
         return
     }
 
-    m.setError("all profiles failed")
+    m.setError("所有配置都失败")
 }
 
 func (m *Manager) startSingle() {
     profiles := enabledProfiles(m.cfg.Profiles)
     if len(profiles) == 0 {
-        m.setError("no enabled profiles")
+        m.setError("没有可用的配置")
         return
     }
 
@@ -248,7 +248,7 @@ func (m *Manager) startProfile(p *config.Profile, index int) error {
 
     select {
     case err := <-failCh:
-        m.appendLog(fmt.Sprintf("startup failed: %v", err))
+        m.appendLog(fmt.Sprintf("启动失败: %v", err))
         _ = cmd.Process.Kill()
         return err
     case <-readyCh:
@@ -259,29 +259,29 @@ func (m *Manager) startProfile(p *config.Profile, index int) error {
             m.setHealth("disabled", "")
         }
         if err := m.waitForStatusOK(frpcPath, cfgPath, p); err != nil {
-            m.appendLog(fmt.Sprintf("status check failed: %v", err))
+            m.appendLog(fmt.Sprintf("状态检查失败: %v", err))
             m.setHealth("fail", err.Error())
             _ = cmd.Process.Kill()
             return err
         }
     case <-time.After(startTimeout):
-        err := errors.New("start timeout")
-        m.appendLog("start timeout")
+        err := errors.New("启动超时")
+        m.appendLog("启动超时")
         _ = cmd.Process.Kill()
         return err
     case err := <-exitCh:
         if err != nil {
-            return fmt.Errorf("process exited early: %w", err)
+            return fmt.Errorf("进程提前退出: %w", err)
         }
-        return errors.New("process exited")
+        return errors.New("进程退出")
     }
 
     go func() {
         err := <-exitCh
         if err == nil {
-            m.setError("process exited")
+            m.setError("进程退出")
         } else {
-            m.setError(fmt.Sprintf("process exited: %v", err))
+            m.setError(fmt.Sprintf("进程退出: %v", err))
         }
         if m.autoSwitch {
             m.StartNext()
@@ -311,7 +311,7 @@ func preCheck(p *config.Profile) error {
         d := time.Duration(defaultInt(p.HealthTimeoutSec, 5)) * time.Second
         conn, err := net.DialTimeout("tcp", addr, d)
         if err != nil {
-            return fmt.Errorf("server connect failed: %w", err)
+            return fmt.Errorf("服务器连通失败: %w", err)
         }
         _ = conn.Close()
     }
@@ -322,7 +322,7 @@ func preCheck(p *config.Profile) error {
             addr := fmt.Sprintf("127.0.0.1:%d", port)
             conn, err := net.DialTimeout("tcp", addr, d)
             if err != nil {
-                return fmt.Errorf("local service not reachable on %d: %w", port, err)
+                return fmt.Errorf("本地端口 %d 不可达: %w", port, err)
             }
             _ = conn.Close()
         }
@@ -422,10 +422,10 @@ func resolveConfigPath(p *config.Profile) (string, error) {
         }
     }
     if cfgPath == "" {
-        return "", errors.New("config path is empty")
+        return "", errors.New("配置路径为空")
     }
     if _, err := os.Stat(cfgPath); err != nil {
-        return "", fmt.Errorf("config not found: %w", err)
+        return "", fmt.Errorf("配置不存在: %w", err)
     }
     return cfgPath, nil
 }
@@ -439,7 +439,7 @@ func (m *Manager) waitForStatusOK(frpcPath, cfgPath string, p *config.Profile) e
     var lastErr error
     for time.Now().Before(deadline) {
         if err := m.checkStatusOnce(frpcPath, cfgPath, p); err == nil {
-            m.appendLog("status check ok")
+            m.appendLog("状态检查通过")
             m.setHealth("ok", "")
             return nil
         } else {
@@ -451,7 +451,7 @@ func (m *Manager) waitForStatusOK(frpcPath, cfgPath string, p *config.Profile) e
     if lastErr != nil {
         return lastErr
     }
-    return errors.New("status check timeout")
+    return errors.New("状态检查超时")
 }
 
 func (m *Manager) monitorStatus(ctx context.Context, frpcPath, cfgPath string, p *config.Profile) {
@@ -468,8 +468,8 @@ func (m *Manager) monitorStatus(ctx context.Context, frpcPath, cfgPath string, p
                 failures++
                 m.setHealth("fail", err.Error())
                 if failures >= 3 {
-                    m.appendLog(fmt.Sprintf("status monitor failed: %v", err))
-                    m.failAndSwitch("status monitor failed")
+                    m.appendLog(fmt.Sprintf("状态监测失败: %v", err))
+                    m.failAndSwitch("状态监测失败")
                     return
                 }
             } else {
@@ -502,7 +502,7 @@ func (m *Manager) CheckStatusNow() error {
     m.mu.Unlock()
 
     if name == "" {
-        return errors.New("no running profile")
+        return errors.New("当前没有正在运行的配置")
     }
     var p *config.Profile
     for i := range cfg.Profiles {
@@ -512,7 +512,7 @@ func (m *Manager) CheckStatusNow() error {
         }
     }
     if p == nil {
-        return errors.New("active profile not found")
+        return errors.New("未找到当前配置")
     }
     cfgPath, err := resolveConfigPath(p)
     if err != nil {

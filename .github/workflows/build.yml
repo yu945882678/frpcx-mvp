@@ -57,24 +57,28 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
+            dist_os: linux
             frp_archive: frp_0.65.0_linux_amd64.tar.gz
             frp_dir: frp_0.65.0_linux_amd64
             frpc_name: frpc
           - os: macos-15-intel
             goos: darwin
             goarch: amd64
+            dist_os: macos
             frp_archive: frp_0.65.0_darwin_amd64.tar.gz
             frp_dir: frp_0.65.0_darwin_amd64
             frpc_name: frpc
           - os: macos-latest
             goos: darwin
             goarch: arm64
+            dist_os: macos
             frp_archive: frp_0.65.0_darwin_arm64.tar.gz
             frp_dir: frp_0.65.0_darwin_arm64
             frpc_name: frpc
           - os: windows-latest
             goos: windows
             goarch: amd64
+            dist_os: windows
             frp_archive: frp_0.65.0_windows_amd64.zip
             frp_dir: frp_0.65.0_windows_amd64
             frpc_name: frpc.exe
@@ -132,8 +136,8 @@ jobs:
           CGO_ENABLED: 1
           GOFLAGS: -mod=mod
         run: |
-          fyne package --os darwin --name FRPCX --app-id com.frpcx.app --app-version 0.0.${{ github.run_number }} --app-build ${{ github.run_number }} --icon Icon.png --tags with_embedded_frpc --release
-          ditto -c -k --sequesterRsrc --keepParent FRPCX.app frpcx-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          fyne package --os darwin --name "穿透助手" --app-id com.suidaohe.app --app-version 0.0.${{ github.run_number }} --app-build ${{ github.run_number }} --icon Icon.png --tags with_embedded_frpc --release
+          ditto -c -k --sequesterRsrc --keepParent "穿透助手.app" frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}.zip
 
       - name: Build (non-mac)
         if: matrix.goos != 'darwin'
@@ -142,21 +146,21 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOFLAGS: -mod=mod
         run: |
-          go build -tags with_embedded_frpc -o frpcx-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          go build -tags with_embedded_frpc -o frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
       - name: Upload artifact (macOS)
         if: matrix.goos == 'darwin'
         uses: actions/upload-artifact@v4
         with:
-          name: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          name: frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}
+          path: frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}.zip
 
       - name: Upload artifact (non-mac)
         if: matrix.goos != 'darwin'
         uses: actions/upload-artifact@v4
         with:
-          name: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: frpcx-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          name: frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}
+          path: frpcx-${{ matrix.dist_os }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
   release:
     needs: build

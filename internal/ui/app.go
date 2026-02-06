@@ -36,8 +36,8 @@ type App struct {
 }
 
 func Run(cfg *config.AppConfig) {
-    a := app.NewWithID("frpcx")
-    win := a.NewWindow("frpcx")
+    a := app.NewWithID("suidaohe")
+    win := a.NewWindow("穿透助手")
     mgr := frpc.NewManager(cfg)
 
     ui := &App{
@@ -57,33 +57,33 @@ func Run(cfg *config.AppConfig) {
 }
 
 func (u *App) build() {
-    u.statusLabel = widget.NewLabel("stopped")
+    u.statusLabel = widget.NewLabel("已停止")
     u.profileLabel = widget.NewLabel("-")
     u.errorLabel = widget.NewLabel("")
-    u.healthLabel = widget.NewLabel("unknown")
+    u.healthLabel = widget.NewLabel("未知")
     u.healthErr = widget.NewLabel("")
     u.logEntry = widget.NewMultiLineEntry()
     u.logEntry.SetMinRowsVisible(8)
     u.logEntry.Wrapping = fyne.TextWrapOff
     u.logEntry.Disable()
 
-    startBtn := widget.NewButton("Start", func() {
+    startBtn := widget.NewButton("启动", func() {
         u.mgr.StartAuto()
     })
-    stopBtn := widget.NewButton("Stop", func() {
+    stopBtn := widget.NewButton("停止", func() {
         u.mgr.Stop()
     })
-    syncBtn := widget.NewButton("Sync WebDAV", func() {
+    syncBtn := widget.NewButton("同步 WebDAV", func() {
         u.syncWebDAV()
     })
-    checkBtn := widget.NewButton("Check Status", func() {
+    checkBtn := widget.NewButton("检查状态", func() {
         if err := u.mgr.CheckStatusNow(); err != nil {
             dialog.ShowError(err, u.win)
             return
         }
-        dialog.ShowInformation("Status", "OK", u.win)
+        dialog.ShowInformation("状态", "正常", u.win)
     })
-    autoSwitch := widget.NewCheck("Auto Switch", func(v bool) {
+    autoSwitch := widget.NewCheck("自动切换", func(v bool) {
         u.cfg.AutoSwitch = v
         u.mgr.SetConfig(u.cfg)
         _ = config.Save(u.cfg)
@@ -91,17 +91,17 @@ func (u *App) build() {
     autoSwitch.SetChecked(u.cfg.AutoSwitch)
 
     statusGrid := container.NewGridWithColumns(2,
-        widget.NewLabel("Status"), u.statusLabel,
-        widget.NewLabel("Profile"), u.profileLabel,
-        widget.NewLabel("Last Error"), u.errorLabel,
-        widget.NewLabel("Health"), u.healthLabel,
-        widget.NewLabel("Health Error"), u.healthErr,
+        widget.NewLabel("状态"), u.statusLabel,
+        widget.NewLabel("配置"), u.profileLabel,
+        widget.NewLabel("最近错误"), u.errorLabel,
+        widget.NewLabel("健康"), u.healthLabel,
+        widget.NewLabel("健康错误"), u.healthErr,
     )
 
     statusTab := container.NewVBox(
         statusGrid,
         container.NewHBox(startBtn, stopBtn, syncBtn, checkBtn, autoSwitch),
-        widget.NewLabel("Logs"),
+        widget.NewLabel("日志"),
         u.logEntry,
     )
 
@@ -109,8 +109,8 @@ func (u *App) build() {
     webdavTab := u.buildWebDAVTab()
 
     tabs := container.NewAppTabs(
-        container.NewTabItem("Status", statusTab),
-        container.NewTabItem("Profiles", profilesTab),
+        container.NewTabItem("状态", statusTab),
+        container.NewTabItem("配置", profilesTab),
         container.NewTabItem("WebDAV", webdavTab),
     )
 
@@ -128,7 +128,7 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
             p := u.cfg.Profiles[i]
             status := ""
             if !p.Enabled {
-                status = " (disabled)"
+                status = "（已禁用）"
             }
             o.(*widget.Label).SetText(p.Name + status)
         },
@@ -138,8 +138,8 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         u.selectedIdx = id
     }
 
-    addBtn := widget.NewButton("Add", func() {
-        u.showProfileDialog("Add Profile", nil, func(p config.Profile) {
+    addBtn := widget.NewButton("添加", func() {
+        u.showProfileDialog("添加配置", nil, func(p config.Profile) {
             u.cfg.Profiles = append(u.cfg.Profiles, p)
             _ = config.Save(u.cfg)
             u.mgr.SetConfig(u.cfg)
@@ -147,12 +147,12 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         })
     })
 
-    editBtn := widget.NewButton("Edit", func() {
+    editBtn := widget.NewButton("编辑", func() {
         if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
             return
         }
         p := u.cfg.Profiles[u.selectedIdx]
-        u.showProfileDialog("Edit Profile", &p, func(updated config.Profile) {
+        u.showProfileDialog("编辑配置", &p, func(updated config.Profile) {
             u.cfg.Profiles[u.selectedIdx] = updated
             _ = config.Save(u.cfg)
             u.mgr.SetConfig(u.cfg)
@@ -160,7 +160,7 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         })
     })
 
-    removeBtn := widget.NewButton("Remove", func() {
+    removeBtn := widget.NewButton("删除", func() {
         if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
             return
         }
@@ -171,7 +171,7 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         u.list.Refresh()
     })
 
-    upBtn := widget.NewButton("Up", func() {
+    upBtn := widget.NewButton("上移", func() {
         if u.selectedIdx <= 0 || u.selectedIdx >= len(u.cfg.Profiles) {
             return
         }
@@ -182,7 +182,7 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         u.list.Refresh()
     })
 
-    downBtn := widget.NewButton("Down", func() {
+    downBtn := widget.NewButton("下移", func() {
         if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles)-1 {
             return
         }
@@ -193,7 +193,7 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
         u.list.Refresh()
     })
 
-    setActiveBtn := widget.NewButton("Set Active", func() {
+    setActiveBtn := widget.NewButton("设为默认", func() {
         if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
             return
         }
@@ -217,7 +217,7 @@ func (u *App) buildWebDAVTab() fyne.CanvasObject {
     baseEntry := widget.NewEntry()
     baseEntry.SetText(u.cfg.WebDAV.RemoteBase)
 
-    saveBtn := widget.NewButton("Save", func() {
+    saveBtn := widget.NewButton("保存", func() {
         u.cfg.WebDAV.URL = strings.TrimSpace(urlEntry.Text)
         u.cfg.WebDAV.Username = strings.TrimSpace(userEntry.Text)
         u.cfg.WebDAV.Password = passEntry.Text
@@ -226,16 +226,16 @@ func (u *App) buildWebDAVTab() fyne.CanvasObject {
         u.mgr.SetConfig(u.cfg)
     })
 
-    syncBtn := widget.NewButton("Sync Now", func() {
+    syncBtn := widget.NewButton("立即同步", func() {
         u.syncWebDAV()
     })
 
     form := &widget.Form{
         Items: []*widget.FormItem{
             {Text: "URL", Widget: urlEntry},
-            {Text: "Username", Widget: userEntry},
-            {Text: "Password", Widget: passEntry},
-            {Text: "Remote Base", Widget: baseEntry},
+            {Text: "用户名", Widget: userEntry},
+            {Text: "密码", Widget: passEntry},
+            {Text: "远程根目录", Widget: baseEntry},
         },
         SubmitText: "",
         OnSubmit:   nil,
@@ -246,7 +246,7 @@ func (u *App) buildWebDAVTab() fyne.CanvasObject {
 
 func (u *App) showProfileDialog(title string, existing *config.Profile, onSave func(config.Profile)) {
     name := widget.NewEntry()
-    enabled := widget.NewCheck("Enabled", nil)
+    enabled := widget.NewCheck("启用", nil)
     frpcPath := widget.NewEntry()
     configPath := widget.NewEntry()
     remoteConfig := widget.NewEntry()
@@ -255,7 +255,7 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
     localPorts := widget.NewEntry()
     startTimeout := widget.NewEntry()
     healthTimeout := widget.NewEntry()
-    requireStatus := widget.NewCheck("Require Status Check", nil)
+    requireStatus := widget.NewCheck("启用状态检查", nil)
     statusTimeout := widget.NewEntry()
     statusInterval := widget.NewEntry()
     extraArgs := widget.NewEntry()
@@ -296,21 +296,21 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
     frpcRow := u.filePickerRow(frpcPath, nil)
     configRow := u.filePickerRow(configPath, storage.NewExtensionFileFilter([]string{".toml", ".ini", ".yaml", ".yml", ".json"}))
 
-    form := dialog.NewForm(title, "Save", "Cancel", []*widget.FormItem{
-        {Text: "Name", Widget: name},
-        {Text: "Enabled", Widget: enabled},
-        {Text: "frpc Path", Widget: frpcRow},
-        {Text: "Config Path", Widget: configRow},
-        {Text: "Remote Config", Widget: remoteConfig},
-        {Text: "Server Addr", Widget: serverAddr},
-        {Text: "Server Port", Widget: serverPort},
-        {Text: "Local Ports", Widget: localPorts},
-        {Text: "Start Timeout", Widget: startTimeout},
-        {Text: "Health Timeout", Widget: healthTimeout},
-        {Text: "Status Check", Widget: requireStatus},
-        {Text: "Status Timeout", Widget: statusTimeout},
-        {Text: "Status Interval", Widget: statusInterval},
-        {Text: "Extra Args", Widget: extraArgs},
+    form := dialog.NewForm(title, "保存", "取消", []*widget.FormItem{
+        {Text: "名称", Widget: name},
+        {Text: "启用", Widget: enabled},
+        {Text: "frpc 路径", Widget: frpcRow},
+        {Text: "配置文件", Widget: configRow},
+        {Text: "远程配置", Widget: remoteConfig},
+        {Text: "服务器地址", Widget: serverAddr},
+        {Text: "服务器端口", Widget: serverPort},
+        {Text: "本地端口", Widget: localPorts},
+        {Text: "启动超时(秒)", Widget: startTimeout},
+        {Text: "健康超时(秒)", Widget: healthTimeout},
+        {Text: "状态检查", Widget: requireStatus},
+        {Text: "状态超时(秒)", Widget: statusTimeout},
+        {Text: "状态间隔(秒)", Widget: statusInterval},
+        {Text: "额外参数", Widget: extraArgs},
     }, func(ok bool) {
         if !ok {
             return
@@ -332,7 +332,7 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
             ExtraArgs:        parseArgs(extraArgs.Text),
         }
         if p.Name == "" {
-            dialog.ShowError(fmt.Errorf("name is required"), u.win)
+            dialog.ShowError(fmt.Errorf("名称不能为空"), u.win)
             return
         }
         onSave(p)
@@ -343,7 +343,7 @@ func (u *App) showProfileDialog(title string, existing *config.Profile, onSave f
 }
 
 func (u *App) filePickerRow(entry *widget.Entry, filter storage.FileFilter) fyne.CanvasObject {
-    browse := widget.NewButton("Browse", func() {
+    browse := widget.NewButton("浏览", func() {
         dlg := dialog.NewFileOpen(func(uc fyne.URIReadCloser, err error) {
             if err != nil {
                 dialog.ShowError(err, u.win)
@@ -369,14 +369,14 @@ func (u *App) startStatusTicker() {
         for range ticker.C {
             snap := u.mgr.Status()
             fyne.Do(func() {
-                u.statusLabel.SetText(snap.Status)
+                u.statusLabel.SetText(localizeStatus(snap.Status))
                 if snap.ProfileName == "" {
                     u.profileLabel.SetText("-")
                 } else {
                     u.profileLabel.SetText(snap.ProfileName)
                 }
                 u.errorLabel.SetText(snap.LastError)
-                u.healthLabel.SetText(snap.Health)
+                u.healthLabel.SetText(localizeHealth(snap.Health))
                 u.healthErr.SetText(snap.HealthError)
                 if len(snap.LogLines) > 0 {
                     u.logEntry.SetText(strings.Join(snap.LogLines, "\n"))
@@ -388,14 +388,14 @@ func (u *App) startStatusTicker() {
 
 func (u *App) setupTray() {
     if desk, ok := u.app.(desktop.App); ok {
-        showItem := fyne.NewMenuItem("Show", func() { u.win.Show() })
-        hideItem := fyne.NewMenuItem("Hide", func() { u.win.Hide() })
-        startItem := fyne.NewMenuItem("Start", func() { u.mgr.StartAuto() })
-        stopItem := fyne.NewMenuItem("Stop", func() { u.mgr.Stop() })
-        syncItem := fyne.NewMenuItem("Sync", func() { u.syncWebDAV() })
-        quitItem := fyne.NewMenuItem("Quit", func() { u.app.Quit() })
+        showItem := fyne.NewMenuItem("显示", func() { u.win.Show() })
+        hideItem := fyne.NewMenuItem("隐藏", func() { u.win.Hide() })
+        startItem := fyne.NewMenuItem("启动", func() { u.mgr.StartAuto() })
+        stopItem := fyne.NewMenuItem("停止", func() { u.mgr.Stop() })
+        syncItem := fyne.NewMenuItem("同步", func() { u.syncWebDAV() })
+        quitItem := fyne.NewMenuItem("退出", func() { u.app.Quit() })
 
-        menu := fyne.NewMenu("frpcx", showItem, hideItem, startItem, stopItem, syncItem, quitItem)
+        menu := fyne.NewMenu("穿透助手", showItem, hideItem, startItem, stopItem, syncItem, quitItem)
         desk.SetSystemTrayMenu(menu)
     }
 }
@@ -407,7 +407,7 @@ func (u *App) syncWebDAV() {
         return
     }
     if len(updated) == 0 {
-        dialog.ShowInformation("WebDAV", "No profiles updated", u.win)
+        dialog.ShowInformation("WebDAV", "没有需要更新的配置", u.win)
         return
     }
 
@@ -420,7 +420,41 @@ func (u *App) syncWebDAV() {
     }
     _ = config.Save(u.cfg)
     u.mgr.SetConfig(u.cfg)
-    dialog.ShowInformation("WebDAV", "Sync completed", u.win)
+    dialog.ShowInformation("WebDAV", "同步完成", u.win)
+}
+
+func localizeStatus(status string) string {
+    switch status {
+    case "starting":
+        return "启动中"
+    case "running":
+        return "运行中"
+    case "stopped":
+        return "已停止"
+    case "error":
+        return "异常"
+    default:
+        return status
+    }
+}
+
+func localizeHealth(health string) string {
+    switch health {
+    case "unknown":
+        return "未知"
+    case "checking":
+        return "检查中"
+    case "ok":
+        return "正常"
+    case "fail":
+        return "失败"
+    case "disabled":
+        return "未启用"
+    case "stopped":
+        return "已停止"
+    default:
+        return health
+    }
 }
 
 func parseInt(s string) int {

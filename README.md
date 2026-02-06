@@ -1,4 +1,4 @@
-# frpcx (MVP)
+# 穿透助手 (MVP)
 
 一个小巧的跨平台桌面 frpc 客户端，支持多配置自动切换与 WebDAV 同步。
 
@@ -28,7 +28,7 @@ GOOS=darwin GOARCH=amd64 go build -o frpcx
 ## macOS 提示“已损坏/无法打开”
 这是 macOS Gatekeeper 对未签名应用的拦截。将应用拖到“应用程序”后，执行以下命令解除隔离：
 ```bash
-xattr -dr com.apple.quarantine /Applications/FRPCX.app
+xattr -dr com.apple.quarantine /Applications/穿透助手.app
 ```
 然后双击即可打开。
 
