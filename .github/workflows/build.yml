@@ -80,7 +80,6 @@ jobs:
             frpc_name: frpc.exe
 
     needs: tidy
-    if: needs.tidy.outputs.changed != 'true'
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -97,6 +96,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xorg-dev libgl1-mesa-dev
+
+      - name: Go mod tidy
+        run: |
+          go mod tidy
 
       - name: Download frpc (unix)
         if: matrix.goos != 'windows'
