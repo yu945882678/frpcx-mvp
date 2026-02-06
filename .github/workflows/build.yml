@@ -132,7 +132,7 @@ jobs:
           CGO_ENABLED: 1
           GOFLAGS: -mod=mod
         run: |
-          fyne package -os darwin -name FRPCX -appID com.frpcx.app -appVersion ${{ github.run_number }} -icon Icon.png -release
+          fyne package --os darwin --name FRPCX --app-id com.frpcx.app --app-version 0.0.${{ github.run_number }} --app-build ${{ github.run_number }} --icon Icon.png --tags with_embedded_frpc --release
           ditto -c -k --sequesterRsrc --keepParent FRPCX.app frpcx-${{ matrix.goos }}-${{ matrix.goarch }}.zip
 
       - name: Build (non-mac)
