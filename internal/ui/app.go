@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -153,11 +154,20 @@ func (u *App) build() {
 	u.updateProxyTypeUI()
 
 	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), func() {
-		u.saveFormToGeneratedToml(u.readForm())
+		if err := u.saveFormToGeneratedToml(u.readForm()); err != nil {
+			u.errorLabel.SetText(err.Error())
+			return
+		}
+		u.errorLabel.SetText("")
 	})
 	startBtn := widget.NewButtonWithIcon("启动", theme.MediaPlayIcon(), func() {
-		u.saveFormToGeneratedToml(u.readForm())
+		if err := u.saveFormToGeneratedToml(u.readForm()); err != nil {
+			u.errorLabel.SetText(err.Error())
+			return
+		}
+		u.errorLabel.SetText("")
 		u.mgr.StartAuto()
+		go u.watchStartResult()
 	})
 	stopBtn := widget.NewButtonWithIcon("停止", theme.MediaStopIcon(), func() {
 		u.mgr.Stop()
@@ -222,7 +232,7 @@ func (u *App) scheduleAutoSave(form frpcForm) {
 	})
 }
 
-func (u *App) saveFormToGeneratedToml(form frpcForm) {
+func (u *App) saveFormToGeneratedToml(form frpcForm) error {
 	u.autoSaveMu.Lock()
 	defer u.autoSaveMu.Unlock()
 
@@ -235,7 +245,7 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.setHint("配置已清空")
-		return
+		return fmt.Errorf("请先填写配置参数")
 	}
 
 	if form.ProxyType == "" {
@@ -243,18 +253,18 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 	}
 	if form.ServerAddr == "" {
 		u.setHint("未保存：请填写服务器地址")
-		return
+		return fmt.Errorf("请填写服务器地址")
 	}
 
 	serverPort, err := parsePort(form.ServerPort)
 	if err != nil {
 		u.setHint("未保存：服务器端口无效")
-		return
+		return fmt.Errorf("服务器端口无效")
 	}
 	localPort, err := parsePort(form.LocalPort)
 	if err != nil {
 		u.setHint("未保存：本地端口无效")
-		return
+		return fmt.Errorf("本地端口无效")
 	}
 
 	domain := form.Domain
@@ -263,25 +273,25 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		remotePort, err = parsePort(form.RemotePort)
 		if err != nil {
 			u.setHint("未保存：远程端口无效")
-			return
+			return fmt.Errorf("远程端口无效")
 		}
 	} else {
 		if domain == "" {
 			u.setHint("未保存：HTTP 模式请填写域名")
-			return
+			return fmt.Errorf("HTTP 模式请填写域名")
 		}
 	}
 
 	cfgPath, err := generatedConfigPath()
 	if err != nil {
 		u.setHint("未保存：无法创建配置目录")
-		return
+		return fmt.Errorf("无法创建配置目录")
 	}
 
 	content := buildFrpcToml(form.ServerAddr, serverPort, form.Token, singleProfileName, form.ProxyType, localPort, domain, remotePort)
 	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		u.setHint("未保存：写入 TOML 失败")
-		return
+		return fmt.Errorf("写入 TOML 失败")
 	}
 
 	u.cfg.ActiveProfile = singleProfileName
@@ -298,10 +308,41 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 	}}
 	if err := config.Save(u.cfg); err != nil {
 		u.setHint("未保存：写入应用配置失败")
-		return
+		return fmt.Errorf("写入应用配置失败")
 	}
 	u.mgr.SetConfig(u.cfg)
 	u.setHint("已自动保存")
+	return nil
+}
+
+func (u *App) watchStartResult() {
+	timeout := time.NewTimer(12 * time.Second)
+	defer timeout.Stop()
+	ticker := time.NewTicker(350 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout.C:
+			fyne.Do(func() {
+				if strings.TrimSpace(u.errorLabel.Text) == "" {
+					u.errorLabel.SetText("启动超时，请检查参数和日志")
+				}
+			})
+			return
+		case <-ticker.C:
+			snap := u.mgr.Status()
+			if snap.Status == "running" {
+				return
+			}
+			if snap.Status == "error" {
+				fyne.Do(func() {
+					u.errorLabel.SetText(snap.LastError)
+				})
+				return
+			}
+		}
+	}
 }
 
 func isEmptyForm(form frpcForm) bool {
@@ -495,7 +536,9 @@ func (u *App) startStatusTicker() {
 			fyne.Do(func() {
 				u.statusDot.Color = statusColor(snap.Status)
 				u.statusDot.Refresh()
-				u.errorLabel.SetText(snap.LastError)
+				if strings.TrimSpace(snap.LastError) != "" {
+					u.errorLabel.SetText(snap.LastError)
+				}
 				if len(snap.LogLines) > 0 {
 					u.logEntry.SetText(strings.Join(snap.LogLines, "\n"))
 				}
