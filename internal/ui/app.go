@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,7 +56,7 @@ func Run(cfg *config.AppConfig) {
     ui.setupTray()
     ui.startStatusTicker()
 
-	win.Resize(fyne.NewSize(980, 700))
+	win.Resize(fyne.NewSize(760, 540))
 	win.ShowAndRun()
 }
 
@@ -67,7 +67,7 @@ func (u *App) build() {
 	u.healthLabel = widget.NewLabelWithStyle("未知", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.healthErr = widget.NewLabel("")
 	u.logEntry = widget.NewMultiLineEntry()
-	u.logEntry.SetMinRowsVisible(10)
+	u.logEntry.SetMinRowsVisible(7)
 	u.logEntry.Wrapping = fyne.TextWrapOff
 	u.logEntry.Disable()
 
@@ -94,35 +94,37 @@ func (u *App) build() {
 	})
 	autoSwitch.SetChecked(u.cfg.AutoSwitch)
 
-	headline := container.NewVBox(
-		widget.NewLabelWithStyle("穿透助手", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("极简跨端 FRPC 控制台"),
-	)
-	headlineCard := widget.NewCard("", "", headline)
+	title := widget.NewLabelWithStyle("穿透助手", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	subtitle := widget.NewLabel("三步使用：添加配置 -> 设为默认 -> 启动代理")
+	titleCard := widget.NewCard("", "", container.NewVBox(title, subtitle))
 
-	metrics := container.NewGridWithColumns(2,
-		u.metricCard("运行状态", u.statusLabel, u.errorLabel),
-		u.metricCard("健康检查", u.healthLabel, u.healthErr),
-	)
-	profileCard := widget.NewCard("当前配置", "", u.profileLabel)
+	statusCard := widget.NewCard("运行状态", "", container.NewVBox(
+		widget.NewLabel("状态"),
+		u.statusLabel,
+		widget.NewSeparator(),
+		widget.NewLabel("当前配置"),
+		u.profileLabel,
+		widget.NewSeparator(),
+		widget.NewLabel("错误信息"),
+		u.errorLabel,
+	))
+	healthCard := widget.NewCard("健康检查", "", container.NewVBox(
+		u.healthLabel,
+		u.healthErr,
+	))
+	metrics := container.NewGridWithColumns(2, statusCard, healthCard)
 
-	actionsRow := container.NewGridWithColumns(2, startBtn, stopBtn)
-	toolsRow := container.NewGridWithColumns(2, syncBtn, checkBtn)
-	autoRow := container.NewHBox(autoSwitch)
-	actionsCard := widget.NewCard("快捷操作", "", container.NewVBox(actionsRow, toolsRow, autoRow))
+	actions := widget.NewCard("快捷操作", "", container.NewVBox(
+		container.NewGridWithColumns(2, startBtn, stopBtn),
+		container.NewGridWithColumns(2, syncBtn, checkBtn),
+		autoSwitch,
+	))
+
 	logsCard := widget.NewCard("日志", "", u.logEntry)
+	statusTab := container.NewVBox(titleCard, metrics, actions, logsCard)
 
-	statusTab := container.NewVBox(
-		headlineCard,
-		metrics,
-		profileCard,
-		actionsCard,
-		logsCard,
-		layout.NewSpacer(),
-    )
-
-    profilesTab := u.buildProfilesTab()
-    webdavTab := u.buildWebDAVTab()
+	profilesTab := u.buildProfilesTab()
+	webdavTab := u.buildWebDAVTab()
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("状态", statusTab),
@@ -130,37 +132,43 @@ func (u *App) build() {
 		container.NewTabItem("云同步", webdavTab),
 	)
 
-    u.win.SetContent(tabs)
+	u.win.SetContent(tabs)
 }
 
 func (u *App) buildProfilesTab() fyne.CanvasObject {
-	u.selectedInfo = widget.NewLabel("请选择左侧配置查看摘要")
+	u.selectedInfo = widget.NewLabel("请先点击“引导添加”，只需填写配置文件即可。")
 	u.selectedInfo.Wrapping = fyne.TextWrapWord
 
 	u.list = widget.NewList(
 		func() int { return len(u.cfg.Profiles) },
 		func() fyne.CanvasObject { return widget.NewLabel("") },
-        func(i widget.ListItemID, o fyne.CanvasObject) {
-            if i < 0 || i >= len(u.cfg.Profiles) {
-                return
-            }
-            p := u.cfg.Profiles[i]
-            status := ""
-            if !p.Enabled {
-                status = "（已禁用）"
-            }
-            o.(*widget.Label).SetText(p.Name + status)
-        },
-    )
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			if i < 0 || i >= len(u.cfg.Profiles) {
+				return
+			}
+			p := u.cfg.Profiles[i]
+			status := ""
+			if !p.Enabled {
+				status = "（已禁用）"
+			}
+			if u.cfg.ActiveProfile == p.Name {
+				status += " [默认]"
+			}
+			o.(*widget.Label).SetText(p.Name + status)
+		},
+	)
 
 	u.list.OnSelected = func(id widget.ListItemID) {
 		u.selectedIdx = id
 		u.refreshSelectedProfileInfo()
 	}
 
-    addBtn := widget.NewButton("添加", func() {
-        u.showProfileDialog("添加配置", nil, func(p config.Profile) {
+	addBtn := widget.NewButton("引导添加", func() {
+		u.showProfileDialog("引导添加配置", nil, func(p config.Profile, setDefault bool) {
 			u.cfg.Profiles = append(u.cfg.Profiles, p)
+			if setDefault {
+				u.cfg.ActiveProfile = p.Name
+			}
 			_ = config.Save(u.cfg)
 			u.mgr.SetConfig(u.cfg)
 			u.list.Refresh()
@@ -168,13 +176,19 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 		})
 	})
 
-    editBtn := widget.NewButton("编辑", func() {
-        if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-            return
-        }
-        p := u.cfg.Profiles[u.selectedIdx]
-        u.showProfileDialog("编辑配置", &p, func(updated config.Profile) {
+	editBtn := widget.NewButton("编辑", func() {
+		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+			return
+		}
+		p := u.cfg.Profiles[u.selectedIdx]
+		u.showProfileDialog("编辑配置", &p, func(updated config.Profile, setDefault bool) {
 			u.cfg.Profiles[u.selectedIdx] = updated
+			if setDefault {
+				u.cfg.ActiveProfile = updated.Name
+			} else if u.cfg.ActiveProfile == p.Name {
+				// 默认配置重命名时保持默认指向新名称。
+				u.cfg.ActiveProfile = updated.Name
+			}
 			_ = config.Save(u.cfg)
 			u.mgr.SetConfig(u.cfg)
 			u.list.Refresh()
@@ -182,62 +196,69 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 		})
 	})
 
-    removeBtn := widget.NewButton("删除", func() {
-        if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-            return
-        }
-        u.cfg.Profiles = append(u.cfg.Profiles[:u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1:]...)
-        u.selectedIdx = -1
+	removeBtn := widget.NewButton("删除", func() {
+		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+			return
+		}
+		removed := u.cfg.Profiles[u.selectedIdx]
+		u.cfg.Profiles = append(u.cfg.Profiles[:u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1:]...)
+		if u.cfg.ActiveProfile == removed.Name {
+			u.cfg.ActiveProfile = ""
+		}
+		u.selectedIdx = -1
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
 	})
 
-    upBtn := widget.NewButton("上移", func() {
-        if u.selectedIdx <= 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-            return
-        }
-        u.cfg.Profiles[u.selectedIdx-1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx-1]
-        u.selectedIdx = u.selectedIdx - 1
+	upBtn := widget.NewButton("上移", func() {
+		if u.selectedIdx <= 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+			return
+		}
+		u.cfg.Profiles[u.selectedIdx-1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx-1]
+		u.selectedIdx = u.selectedIdx - 1
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
 	})
 
-    downBtn := widget.NewButton("下移", func() {
-        if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles)-1 {
-            return
-        }
-        u.cfg.Profiles[u.selectedIdx+1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1]
-        u.selectedIdx = u.selectedIdx + 1
+	downBtn := widget.NewButton("下移", func() {
+		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles)-1 {
+			return
+		}
+		u.cfg.Profiles[u.selectedIdx+1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1]
+		u.selectedIdx = u.selectedIdx + 1
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
 	})
 
-    setActiveBtn := widget.NewButton("设为默认", func() {
-        if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-            return
-        }
+	setActiveBtn := widget.NewButton("设为默认", func() {
+		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+			return
+		}
 		u.cfg.ActiveProfile = u.cfg.Profiles[u.selectedIdx].Name
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
+		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
 	})
 
+	guide := widget.NewLabel("引导模式：\n1. 点击“引导添加”并选择本地 frpc 配置文件\n2. 点击“设为默认”\n3. 回到“状态”页点击“启动代理”")
+	guide.Wrapping = fyne.TextWrapWord
 	buttonsMain := container.NewGridWithColumns(2, addBtn, editBtn)
 	buttonsExtra := container.NewGridWithColumns(2, removeBtn, setActiveBtn)
 	buttonsOrder := container.NewGridWithColumns(2, upBtn, downBtn)
 	listCard := widget.NewCard("配置列表", "", u.list)
-	detailCard := widget.NewCard("配置摘要", "", u.selectedInfo)
+	detailCard := widget.NewCard("配置摘要", "", container.NewVBox(u.selectedInfo, widget.NewSeparator(), guide))
 
 	left := container.NewVBox(listCard, buttonsMain, buttonsExtra, buttonsOrder)
-	right := container.NewVBox(detailCard, layout.NewSpacer())
+	right := container.NewVBox(detailCard)
 	split := container.NewHSplit(left, right)
-	split.SetOffset(0.58)
+	split.SetOffset(0.56)
 	return split
 }
 
@@ -287,35 +308,28 @@ func (u *App) buildWebDAVTab() fyne.CanvasObject {
 	return container.NewVBox(card, tips, actions, layout.NewSpacer())
 }
 
-func (u *App) metricCard(title string, value *widget.Label, detail *widget.Label) fyne.CanvasObject {
-	value.Wrapping = fyne.TextWrapWord
-	detail.Wrapping = fyne.TextWrapWord
-	return widget.NewCard(title, "", container.NewVBox(value, detail))
-}
-
 func (u *App) refreshSelectedProfileInfo() {
 	if u.selectedInfo == nil {
 		return
 	}
 	if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-		u.selectedInfo.SetText("请选择左侧配置查看摘要")
+		u.selectedInfo.SetText("请先点击“引导添加”，只需填写配置文件即可。")
 		return
 	}
 	p := u.cfg.Profiles[u.selectedIdx]
 	lines := []string{
 		fmt.Sprintf("名称: %s", p.Name),
-		fmt.Sprintf("启用: %t", p.Enabled),
+		fmt.Sprintf("启用: %s", boolToText(p.Enabled)),
+	}
+	if u.cfg.ActiveProfile == p.Name {
+		lines = append(lines, "默认启动: 是")
+	} else {
+		lines = append(lines, "默认启动: 否")
 	}
 	if p.ConfigPath != "" {
 		lines = append(lines, fmt.Sprintf("配置文件: %s", p.ConfigPath))
 	} else {
 		lines = append(lines, "配置文件: 未设置")
-	}
-	if p.ServerAddr != "" && p.ServerPort > 0 {
-		lines = append(lines, fmt.Sprintf("服务器: %s:%d", p.ServerAddr, p.ServerPort))
-	}
-	if len(p.LocalCheckPorts) > 0 {
-		lines = append(lines, fmt.Sprintf("本地检查端口: %s", intSliceToString(p.LocalCheckPorts)))
 	}
 	if p.RequireStatus {
 		lines = append(lines, "状态检查: 已启用")
@@ -325,137 +339,101 @@ func (u *App) refreshSelectedProfileInfo() {
 	u.selectedInfo.SetText(strings.Join(lines, "\n"))
 }
 
-func (u *App) showProfileDialog(title string, existing *config.Profile, onSave func(config.Profile)) {
-    name := widget.NewEntry()
-    enabled := widget.NewCheck("启用", nil)
-    frpcPath := widget.NewEntry()
-    configPath := widget.NewEntry()
-    remoteConfig := widget.NewEntry()
-    serverAddr := widget.NewEntry()
-    serverPort := widget.NewEntry()
-    localPorts := widget.NewEntry()
-    startTimeout := widget.NewEntry()
-    healthTimeout := widget.NewEntry()
-    requireStatus := widget.NewCheck("启用状态检查", nil)
-    statusTimeout := widget.NewEntry()
-    statusInterval := widget.NewEntry()
-    extraArgs := widget.NewEntry()
+func (u *App) showProfileDialog(title string, existing *config.Profile, onSave func(config.Profile, bool)) {
+	name := widget.NewEntry()
+	enabled := widget.NewCheck("启用此配置", nil)
+	setDefault := widget.NewCheck("设为默认启动", nil)
+	configPath := widget.NewEntry()
+	frpcPath := widget.NewEntry()
+	remoteConfig := widget.NewEntry()
+	requireStatus := widget.NewCheck("启用健康检查（推荐）", nil)
 
-    name.SetPlaceHolder("必填，例如 家庭线路")
-    configPath.SetPlaceHolder("必填，例如 /path/frpc.toml")
-    frpcPath.SetPlaceHolder("可选，留空使用内置/系统 frpc")
-    remoteConfig.SetPlaceHolder("可选，WebDAV 远程路径")
-    serverAddr.SetPlaceHolder("可选，例如 1.2.3.4")
-    serverPort.SetPlaceHolder("可选")
-    localPorts.SetPlaceHolder("可选，例 8080,8443")
-    startTimeout.SetPlaceHolder("可选，默认 8")
-    healthTimeout.SetPlaceHolder("可选，默认 5")
-    statusTimeout.SetPlaceHolder("可选，默认 10")
-    statusInterval.SetPlaceHolder("可选，默认 5")
-    extraArgs.SetPlaceHolder("可选，例如 -u token")
+	name.SetPlaceHolder("可选，留空将自动按配置文件名生成")
+	configPath.SetPlaceHolder("必填，例如 /path/to/frpc.toml")
+	frpcPath.SetPlaceHolder("可选，留空使用内置或系统 frpc")
+	remoteConfig.SetPlaceHolder("可选，云端配置路径")
 
-    if existing != nil {
-        name.SetText(existing.Name)
-        enabled.SetChecked(existing.Enabled)
-        frpcPath.SetText(existing.FrpcPath)
-        configPath.SetText(existing.ConfigPath)
-        remoteConfig.SetText(existing.RemoteConfigPath)
-        serverAddr.SetText(existing.ServerAddr)
-        if existing.ServerPort > 0 {
-            serverPort.SetText(fmt.Sprintf("%d", existing.ServerPort))
-        }
-        if len(existing.LocalCheckPorts) > 0 {
-            localPorts.SetText(intSliceToString(existing.LocalCheckPorts))
-        }
-        if existing.StartTimeoutSec > 0 {
-            startTimeout.SetText(fmt.Sprintf("%d", existing.StartTimeoutSec))
-        }
-        if existing.HealthTimeoutSec > 0 {
-            healthTimeout.SetText(fmt.Sprintf("%d", existing.HealthTimeoutSec))
-        }
-        requireStatus.SetChecked(existing.RequireStatus)
-        if existing.StatusTimeoutSec > 0 {
-            statusTimeout.SetText(fmt.Sprintf("%d", existing.StatusTimeoutSec))
-        }
-        if existing.StatusIntervalSec > 0 {
-            statusInterval.SetText(fmt.Sprintf("%d", existing.StatusIntervalSec))
-        }
-        if len(existing.ExtraArgs) > 0 {
-            extraArgs.SetText(strings.Join(existing.ExtraArgs, " "))
-        }
-    } else {
-        enabled.SetChecked(true)
-    }
+	if existing != nil {
+		name.SetText(existing.Name)
+		enabled.SetChecked(existing.Enabled)
+		setDefault.SetChecked(u.cfg.ActiveProfile == existing.Name)
+		configPath.SetText(existing.ConfigPath)
+		frpcPath.SetText(existing.FrpcPath)
+		remoteConfig.SetText(existing.RemoteConfigPath)
+		requireStatus.SetChecked(existing.RequireStatus)
+	} else {
+		enabled.SetChecked(true)
+		setDefault.SetChecked(len(u.cfg.Profiles) == 0)
+		requireStatus.SetChecked(true)
+	}
 
-    frpcRow := u.filePickerRow(frpcPath, nil)
-    configRow := u.filePickerRow(configPath, storage.NewExtensionFileFilter([]string{".toml", ".ini", ".yaml", ".yml", ".json"}))
+	configRow := u.filePickerRow(configPath, storage.NewExtensionFileFilter([]string{".toml", ".ini", ".yaml", ".yml", ".json"}))
+	frpcRow := u.filePickerRow(frpcPath, nil)
+	tip := widget.NewLabel("只需要选择配置文件即可运行。其余设置保持默认即可。")
+	tip.Wrapping = fyne.TextWrapWord
 
-    basicForm := &widget.Form{
-        Items: []*widget.FormItem{
-            {Text: "名称", Widget: name},
-            {Text: "启用", Widget: enabled},
-            {Text: "配置文件（必填）", Widget: configRow},
-        },
-        SubmitText: "",
-        OnSubmit:   nil,
-    }
+	basicForm := &widget.Form{
+		Items: []*widget.FormItem{
+			{Text: "配置文件", Widget: configRow},
+			{Text: "名称", Widget: name},
+			{Text: "状态", Widget: enabled},
+			{Text: "默认", Widget: setDefault},
+		},
+	}
 
-    advancedForm := &widget.Form{
-        Items: []*widget.FormItem{
-            {Text: "frpc 路径", Widget: frpcRow},
-            {Text: "远程配置", Widget: remoteConfig},
-            {Text: "服务器地址", Widget: serverAddr},
-            {Text: "服务器端口", Widget: serverPort},
-            {Text: "本地端口", Widget: localPorts},
-            {Text: "启动超时(秒)", Widget: startTimeout},
-            {Text: "健康超时(秒)", Widget: healthTimeout},
-            {Text: "状态检查", Widget: requireStatus},
-            {Text: "状态超时(秒)", Widget: statusTimeout},
-            {Text: "状态间隔(秒)", Widget: statusInterval},
-            {Text: "额外参数", Widget: extraArgs},
-        },
-        SubmitText: "",
-        OnSubmit:   nil,
-    }
+	advancedForm := &widget.Form{
+		Items: []*widget.FormItem{
+			{Text: "健康检查", Widget: requireStatus},
+			{Text: "frpc 路径", Widget: frpcRow},
+			{Text: "云端路径", Widget: remoteConfig},
+		},
+	}
+	advanced := widget.NewAccordion(widget.NewAccordionItem("高级（可选）", advancedForm))
+	advanced.CloseAll()
 
-    advanced := widget.NewAccordion(widget.NewAccordionItem("高级设置（可选）", advancedForm))
-    advanced.CloseAll()
+	content := container.NewVBox(tip, basicForm, advanced)
+	form := dialog.NewCustomConfirm(title, "保存", "取消", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		cfgPath := strings.TrimSpace(configPath.Text)
+		if cfgPath == "" {
+			dialog.ShowError(fmt.Errorf("请选择配置文件"), u.win)
+			return
+		}
 
-    content := container.NewVBox(basicForm, advanced)
+		var p config.Profile
+		if existing != nil {
+			p = *existing
+		} else {
+			p = config.Profile{
+				StartTimeoutSec:   8,
+				HealthTimeoutSec:  3,
+				StatusTimeoutSec:  10,
+				StatusIntervalSec: 5,
+			}
+		}
 
-    form := dialog.NewCustomConfirm(title, "保存", "取消", content, func(ok bool) {
-        if !ok {
-            return
-        }
-        p := config.Profile{
-            Name:             strings.TrimSpace(name.Text),
-            Enabled:          enabled.Checked,
-            FrpcPath:         strings.TrimSpace(frpcPath.Text),
-            ConfigPath:       strings.TrimSpace(configPath.Text),
-            RemoteConfigPath: strings.TrimSpace(remoteConfig.Text),
-            ServerAddr:       strings.TrimSpace(serverAddr.Text),
-            ServerPort:       parseInt(serverPort.Text),
-            LocalCheckPorts:  parsePorts(localPorts.Text),
-            StartTimeoutSec:  parseInt(startTimeout.Text),
-            HealthTimeoutSec: parseInt(healthTimeout.Text),
-            RequireStatus:    requireStatus.Checked,
-            StatusTimeoutSec:  parseInt(statusTimeout.Text),
-            StatusIntervalSec: parseInt(statusInterval.Text),
-            ExtraArgs:        parseArgs(extraArgs.Text),
-        }
-        if p.Name == "" {
-            dialog.ShowError(fmt.Errorf("名称不能为空"), u.win)
-            return
-        }
-        if p.ConfigPath == "" {
-            dialog.ShowError(fmt.Errorf("配置文件不能为空"), u.win)
-            return
-        }
-        onSave(p)
-    }, u.win)
+		p.ConfigPath = cfgPath
+		p.Enabled = enabled.Checked
+		p.FrpcPath = strings.TrimSpace(frpcPath.Text)
+		p.RemoteConfigPath = strings.TrimSpace(remoteConfig.Text)
+		p.RequireStatus = requireStatus.Checked
 
-    form.Resize(fyne.NewSize(480, 520))
-    form.Show()
+		n := strings.TrimSpace(name.Text)
+		if n == "" {
+			n = autoProfileName(cfgPath)
+		}
+		if n == "" {
+			dialog.ShowError(fmt.Errorf("名称不能为空"), u.win)
+			return
+		}
+		p.Name = n
+
+		onSave(p, setDefault.Checked)
+	}, u.win)
+	form.Resize(fyne.NewSize(520, 420))
+	form.Show()
 }
 
 func (u *App) filePickerRow(entry *widget.Entry, filter storage.FileFilter) fyne.CanvasObject {
@@ -536,7 +514,27 @@ func (u *App) syncWebDAV() {
     }
     _ = config.Save(u.cfg)
     u.mgr.SetConfig(u.cfg)
-    dialog.ShowInformation("WebDAV", "同步完成", u.win)
+	dialog.ShowInformation("WebDAV", "同步完成", u.win)
+}
+
+func boolToText(v bool) string {
+	if v {
+		return "是"
+	}
+	return "否"
+}
+
+func autoProfileName(configPath string) string {
+	base := filepath.Base(strings.TrimSpace(configPath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return name
 }
 
 func localizeStatus(status string) string {
@@ -571,48 +569,4 @@ func localizeHealth(health string) string {
     default:
         return health
     }
-}
-
-func parseInt(s string) int {
-    s = strings.TrimSpace(s)
-    if s == "" {
-        return 0
-    }
-    v, _ := strconv.Atoi(s)
-    return v
-}
-
-func parsePorts(s string) []int {
-    s = strings.TrimSpace(s)
-    if s == "" {
-        return nil
-    }
-    parts := strings.Split(s, ",")
-    out := make([]int, 0, len(parts))
-    for _, p := range parts {
-        p = strings.TrimSpace(p)
-        if p == "" {
-            continue
-        }
-        if v, err := strconv.Atoi(p); err == nil {
-            out = append(out, v)
-        }
-    }
-    return out
-}
-
-func parseArgs(s string) []string {
-    s = strings.TrimSpace(s)
-    if s == "" {
-        return nil
-    }
-    return strings.Fields(s)
-}
-
-func intSliceToString(v []int) string {
-    parts := make([]string, 0, len(v))
-    for _, n := range v {
-        parts = append(parts, strconv.Itoa(n))
-    }
-    return strings.Join(parts, ",")
 }

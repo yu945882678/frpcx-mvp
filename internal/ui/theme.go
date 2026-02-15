@@ -46,11 +46,11 @@ func (t *suidaoTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 func (t *suidaoTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNamePadding:
-		return 12
+		return 10
 	case theme.SizeNameInlineIcon:
-		return 18
+		return 16
 	case theme.SizeNameText:
-		return 14
+		return 13
 	}
 	return theme.DefaultTheme().Size(name)
 }
