@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"image/color"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,11 +16,19 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"image/color"
 
 	"frpcx/internal/config"
 	"frpcx/internal/frpc"
 )
+
+type frpcForm struct {
+	ServerAddr string
+	ServerPort string
+	Token      string
+	ProxyName  string
+	LocalPort  string
+	RemotePort string
+}
 
 type App struct {
 	app fyne.App
@@ -27,9 +38,16 @@ type App struct {
 
 	statusDot    *canvas.Text
 	profileLabel *widget.Label
+	hintLabel    *widget.Label
 	errorLabel   *widget.Label
-	pathEntry    *widget.Entry
 	logEntry     *widget.Entry
+
+	serverAddrEntry *widget.Entry
+	serverPortEntry *widget.Entry
+	tokenEntry      *widget.Entry
+	proxyNameEntry  *widget.Entry
+	localPortEntry  *widget.Entry
+	remotePortEntry *widget.Entry
 
 	autoSaveMu    sync.Mutex
 	autoSaveTimer *time.Timer
@@ -54,7 +72,7 @@ func Run(cfg *config.AppConfig) {
 	u.setupTray()
 	u.startStatusTicker()
 
-	win.Resize(fyne.NewSize(700, 380))
+	win.Resize(fyne.NewSize(700, 460))
 	win.ShowAndRun()
 }
 
@@ -63,19 +81,43 @@ func (u *App) build() {
 	u.statusDot.TextSize = 16
 
 	u.profileLabel = widget.NewLabelWithStyle("未配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	u.hintLabel = widget.NewLabel("修改配置项后将自动保存为 TOML")
 	u.errorLabel = widget.NewLabel("")
 
-	u.pathEntry = widget.NewEntry()
-	u.pathEntry.SetPlaceHolder("输入 frpc 配置文件路径（自动保存）")
-	if p := u.currentProfile(); p != nil {
-		u.pathEntry.SetText(p.ConfigPath)
+	initial := u.loadFormFromCurrentProfile()
+	u.serverAddrEntry = widget.NewEntry()
+	u.serverPortEntry = widget.NewEntry()
+	u.tokenEntry = widget.NewPasswordEntry()
+	u.proxyNameEntry = widget.NewEntry()
+	u.localPortEntry = widget.NewEntry()
+	u.remotePortEntry = widget.NewEntry()
+
+	u.serverAddrEntry.SetPlaceHolder("服务器地址，例如 1.2.3.4")
+	u.serverPortEntry.SetPlaceHolder("服务器端口，例如 7000")
+	u.tokenEntry.SetPlaceHolder("Token（可选）")
+	u.proxyNameEntry.SetPlaceHolder("代理名称，例如 ssh")
+	u.localPortEntry.SetPlaceHolder("本地端口，例如 22")
+	u.remotePortEntry.SetPlaceHolder("远程端口，例如 6000")
+
+	u.serverAddrEntry.SetText(initial.ServerAddr)
+	u.serverPortEntry.SetText(initial.ServerPort)
+	u.tokenEntry.SetText(initial.Token)
+	u.proxyNameEntry.SetText(initial.ProxyName)
+	u.localPortEntry.SetText(initial.LocalPort)
+	u.remotePortEntry.SetText(initial.RemotePort)
+
+	onChange := func(string) {
+		u.scheduleAutoSave(u.readForm())
 	}
-	u.pathEntry.OnChanged = func(v string) {
-		u.scheduleAutoSave(v)
-	}
+	u.serverAddrEntry.OnChanged = onChange
+	u.serverPortEntry.OnChanged = onChange
+	u.tokenEntry.OnChanged = onChange
+	u.proxyNameEntry.OnChanged = onChange
+	u.localPortEntry.OnChanged = onChange
+	u.remotePortEntry.OnChanged = onChange
 
 	u.logEntry = widget.NewMultiLineEntry()
-	u.logEntry.SetMinRowsVisible(4)
+	u.logEntry.SetMinRowsVisible(3)
 	u.logEntry.Wrapping = fyne.TextWrapOff
 	u.logEntry.Disable()
 
@@ -87,16 +129,35 @@ func (u *App) build() {
 	})
 
 	statusRow := container.NewHBox(u.statusDot, widget.NewLabel(" "), u.profileLabel)
+	form := &widget.Form{
+		Items: []*widget.FormItem{
+			{Text: "服务器地址", Widget: u.serverAddrEntry},
+			{Text: "服务器端口", Widget: u.serverPortEntry},
+			{Text: "Token", Widget: u.tokenEntry},
+			{Text: "代理名称", Widget: u.proxyNameEntry},
+			{Text: "本地端口", Widget: u.localPortEntry},
+			{Text: "远程端口", Widget: u.remotePortEntry},
+		},
+	}
 	actionsRow := container.NewGridWithColumns(2, startBtn, stopBtn)
 	logsCard := widget.NewCard("日志", "", u.logEntry)
 
 	u.refreshConfiguredProfileLabel()
-	u.win.SetContent(container.NewVBox(statusRow, u.pathEntry, actionsRow, u.errorLabel, logsCard))
+	u.win.SetContent(container.NewVBox(statusRow, form, u.hintLabel, u.errorLabel, actionsRow, logsCard))
 }
 
-func (u *App) scheduleAutoSave(path string) {
-	trimmed := strings.TrimSpace(path)
+func (u *App) readForm() frpcForm {
+	return frpcForm{
+		ServerAddr: strings.TrimSpace(u.serverAddrEntry.Text),
+		ServerPort: strings.TrimSpace(u.serverPortEntry.Text),
+		Token:      strings.TrimSpace(u.tokenEntry.Text),
+		ProxyName:  strings.TrimSpace(u.proxyNameEntry.Text),
+		LocalPort:  strings.TrimSpace(u.localPortEntry.Text),
+		RemotePort: strings.TrimSpace(u.remotePortEntry.Text),
+	}
+}
 
+func (u *App) scheduleAutoSave(form frpcForm) {
 	u.autoSaveMu.Lock()
 	defer u.autoSaveMu.Unlock()
 
@@ -104,36 +165,68 @@ func (u *App) scheduleAutoSave(path string) {
 		u.autoSaveTimer.Stop()
 	}
 
-	u.autoSaveTimer = time.AfterFunc(450*time.Millisecond, func() {
-		u.saveSingleProfile(trimmed)
+	u.autoSaveTimer = time.AfterFunc(500*time.Millisecond, func() {
+		u.saveFormToGeneratedToml(form)
 	})
 }
 
-func (u *App) saveSingleProfile(configPath string) {
+func (u *App) saveFormToGeneratedToml(form frpcForm) {
 	u.cfg.AutoSwitch = false
 	u.cfg.WebDAV = config.WebDAVConfig{}
 
-	if configPath == "" {
+	if isEmptyForm(form) {
 		u.cfg.ActiveProfile = ""
 		u.cfg.Profiles = nil
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		fyne.Do(func() {
+			u.hintLabel.SetText("配置已清空")
 			u.refreshConfiguredProfileLabel()
 		})
 		return
 	}
 
-	name := autoProfileName(configPath)
-	if name == "" {
-		name = "默认配置"
+	serverPort, err := parsePort(form.ServerPort)
+	if err != nil {
+		u.setHint("未保存：服务器端口无效")
+		return
+	}
+	localPort, err := parsePort(form.LocalPort)
+	if err != nil {
+		u.setHint("未保存：本地端口无效")
+		return
+	}
+	remotePort, err := parsePort(form.RemotePort)
+	if err != nil {
+		u.setHint("未保存：远程端口无效")
+		return
+	}
+	if form.ServerAddr == "" {
+		u.setHint("未保存：请填写服务器地址")
+		return
+	}
+	if form.ProxyName == "" {
+		u.setHint("未保存：请填写代理名称")
+		return
+	}
+
+	cfgPath, err := generatedConfigPath()
+	if err != nil {
+		u.setHint("未保存：无法创建配置目录")
+		return
+	}
+
+	content := buildFrpcToml(form.ServerAddr, serverPort, form.Token, form.ProxyName, localPort, remotePort)
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		u.setHint("未保存：写入 TOML 失败")
+		return
 	}
 
 	p := config.Profile{
-		Name:              name,
+		Name:              form.ProxyName,
 		Enabled:           true,
 		FrpcPath:          "",
-		ConfigPath:        configPath,
+		ConfigPath:        cfgPath,
 		RequireStatus:     false,
 		StartTimeoutSec:   8,
 		HealthTimeoutSec:  3,
@@ -143,12 +236,161 @@ func (u *App) saveSingleProfile(configPath string) {
 
 	u.cfg.ActiveProfile = p.Name
 	u.cfg.Profiles = []config.Profile{p}
-	_ = config.Save(u.cfg)
+	if err := config.Save(u.cfg); err != nil {
+		u.setHint("未保存：写入应用配置失败")
+		return
+	}
 	u.mgr.SetConfig(u.cfg)
 
 	fyne.Do(func() {
+		u.hintLabel.SetText("已自动保存")
 		u.refreshConfiguredProfileLabel()
 	})
+}
+
+func (u *App) setHint(msg string) {
+	fyne.Do(func() {
+		u.hintLabel.SetText(msg)
+	})
+}
+
+func isEmptyForm(form frpcForm) bool {
+	return form.ServerAddr == "" &&
+		form.ServerPort == "" &&
+		form.Token == "" &&
+		form.ProxyName == "" &&
+		form.LocalPort == "" &&
+		form.RemotePort == ""
+}
+
+func parsePort(s string) (int, error) {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0, err
+	}
+	if v <= 0 || v > 65535 {
+		return 0, strconv.ErrRange
+	}
+	return v, nil
+}
+
+func generatedConfigPath() (string, error) {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	out := filepath.Join(dir, "generated")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(out, "single.toml"), nil
+}
+
+func buildFrpcToml(serverAddr string, serverPort int, token, proxyName string, localPort, remotePort int) string {
+	var b strings.Builder
+	b.WriteString("serverAddr = \"")
+	b.WriteString(escapeTomlString(serverAddr))
+	b.WriteString("\"\n")
+	b.WriteString("serverPort = ")
+	b.WriteString(strconv.Itoa(serverPort))
+	b.WriteString("\n")
+
+	if token != "" {
+		b.WriteString("auth.method = \"token\"\n")
+		b.WriteString("auth.token = \"")
+		b.WriteString(escapeTomlString(token))
+		b.WriteString("\"\n")
+	}
+
+	b.WriteString("\n[[proxies]]\n")
+	b.WriteString("name = \"")
+	b.WriteString(escapeTomlString(proxyName))
+	b.WriteString("\"\n")
+	b.WriteString("type = \"tcp\"\n")
+	b.WriteString("localIP = \"127.0.0.1\"\n")
+	b.WriteString("localPort = ")
+	b.WriteString(strconv.Itoa(localPort))
+	b.WriteString("\n")
+	b.WriteString("remotePort = ")
+	b.WriteString(strconv.Itoa(remotePort))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func escapeTomlString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
+}
+
+func (u *App) loadFormFromCurrentProfile() frpcForm {
+	p := u.currentProfile()
+	if p == nil || strings.TrimSpace(p.ConfigPath) == "" {
+		return frpcForm{}
+	}
+
+	b, err := os.ReadFile(p.ConfigPath)
+	if err != nil {
+		return frpcForm{}
+	}
+
+	out := frpcForm{}
+	for _, raw := range strings.Split(string(b), "\n") {
+		key, val, ok := splitTomlKV(raw)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "serverAddr":
+			out.ServerAddr = unquoteTomlValue(val)
+		case "serverPort":
+			out.ServerPort = normalizeIntText(val)
+		case "auth.token":
+			out.Token = unquoteTomlValue(val)
+		case "name":
+			if out.ProxyName == "" {
+				out.ProxyName = unquoteTomlValue(val)
+			}
+		case "localPort":
+			out.LocalPort = normalizeIntText(val)
+		case "remotePort":
+			out.RemotePort = normalizeIntText(val)
+		}
+	}
+	return out
+}
+
+func splitTomlKV(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[[") {
+		return "", "", false
+	}
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(parts[0])
+	val := strings.TrimSpace(parts[1])
+	if idx := strings.Index(val, "#"); idx >= 0 {
+		val = strings.TrimSpace(val[:idx])
+	}
+	return key, val, true
+}
+
+func unquoteTomlValue(v string) string {
+	v = strings.TrimSpace(v)
+	if s, err := strconv.Unquote(v); err == nil {
+		return s
+	}
+	return strings.Trim(v, "\"")
+}
+
+func normalizeIntText(v string) string {
+	n, err := strconv.Atoi(unquoteTomlValue(v))
+	if err != nil {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 func (u *App) currentProfile() *config.Profile {
@@ -174,9 +416,6 @@ func (u *App) refreshConfiguredProfileLabel() {
 
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
-		name = autoProfileName(p.ConfigPath)
-	}
-	if name == "" {
 		name = "默认配置"
 	}
 	u.profileLabel.SetText(name)
@@ -188,8 +427,8 @@ func (u *App) startStatusTicker() {
 		for range ticker.C {
 			snap := u.mgr.Status()
 			fyne.Do(func() {
-					u.statusDot.Color = statusColor(snap.Status)
-					u.statusDot.Refresh()
+				u.statusDot.Color = statusColor(snap.Status)
+				u.statusDot.Refresh()
 				if snap.ProfileName == "" {
 					u.refreshConfiguredProfileLabel()
 				} else {
@@ -253,29 +492,12 @@ func normalizeSimpleConfig(cfg *config.AppConfig) {
 	p.StatusIntervalSec = 0
 
 	if strings.TrimSpace(p.Name) == "" {
-		name := autoProfileName(p.ConfigPath)
-		if name == "" {
-			name = "默认配置"
-		}
-		p.Name = name
+		p.Name = "默认配置"
 	}
 
 	cfg.Profiles = []config.Profile{p}
 	cfg.ActiveProfile = p.Name
 	_ = config.Save(cfg)
-}
-
-func autoProfileName(configPath string) string {
-	base := filepath.Base(strings.TrimSpace(configPath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return ""
-	}
-	name := strings.TrimSuffix(base, filepath.Ext(base))
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	return name
 }
 
 func statusColor(status string) color.Color {
