@@ -25,7 +25,7 @@ type App struct {
 	cfg *config.AppConfig
 	mgr *frpc.Manager
 
-	statusDot    *canvas.Circle
+	statusDot    *canvas.Text
 	profileLabel *widget.Label
 	errorLabel   *widget.Label
 	pathEntry    *widget.Entry
@@ -59,8 +59,8 @@ func Run(cfg *config.AppConfig) {
 }
 
 func (u *App) build() {
-	u.statusDot = canvas.NewCircle(statusColor("stopped"))
-	u.statusDot.SetMinSize(fyne.NewSize(14, 14))
+	u.statusDot = canvas.NewText("●", statusColor("stopped"))
+	u.statusDot.TextSize = 16
 
 	u.profileLabel = widget.NewLabelWithStyle("未配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.errorLabel = widget.NewLabel("")
@@ -188,8 +188,8 @@ func (u *App) startStatusTicker() {
 		for range ticker.C {
 			snap := u.mgr.Status()
 			fyne.Do(func() {
-				u.statusDot.FillColor = statusColor(snap.Status)
-				u.statusDot.Refresh()
+					u.statusDot.Color = statusColor(snap.Status)
+					u.statusDot.Refresh()
 				if snap.ProfileName == "" {
 					u.refreshConfiguredProfileLabel()
 				} else {
