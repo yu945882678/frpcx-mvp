@@ -56,7 +56,7 @@ func Run(cfg *config.AppConfig) {
     ui.setupTray()
     ui.startStatusTicker()
 
-	win.Resize(fyne.NewSize(760, 540))
+	win.Resize(fyne.NewSize(740, 460))
 	win.ShowAndRun()
 }
 
@@ -67,7 +67,7 @@ func (u *App) build() {
 	u.healthLabel = widget.NewLabelWithStyle("未知", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.healthErr = widget.NewLabel("")
 	u.logEntry = widget.NewMultiLineEntry()
-	u.logEntry.SetMinRowsVisible(7)
+	u.logEntry.SetMinRowsVisible(5)
 	u.logEntry.Wrapping = fyne.TextWrapOff
 	u.logEntry.Disable()
 
@@ -163,6 +163,14 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 		u.refreshSelectedProfileInfo()
 	}
 
+	selectedIndex := func() (int, bool) {
+		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+			dialog.ShowInformation("提示", "请先在左侧选择一个配置", u.win)
+			return 0, false
+		}
+		return u.selectedIdx, true
+	}
+
 	addBtn := widget.NewButton("引导添加", func() {
 		u.showProfileDialog("引导添加配置", nil, func(p config.Profile, setDefault bool) {
 			u.cfg.Profiles = append(u.cfg.Profiles, p)
@@ -176,13 +184,14 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 		})
 	})
 
-	editBtn := widget.NewButton("编辑", func() {
-		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+	editCurrent := func() {
+		idx, ok := selectedIndex()
+		if !ok {
 			return
 		}
-		p := u.cfg.Profiles[u.selectedIdx]
+		p := u.cfg.Profiles[idx]
 		u.showProfileDialog("编辑配置", &p, func(updated config.Profile, setDefault bool) {
-			u.cfg.Profiles[u.selectedIdx] = updated
+			u.cfg.Profiles[idx] = updated
 			if setDefault {
 				u.cfg.ActiveProfile = updated.Name
 			} else if u.cfg.ActiveProfile == p.Name {
@@ -194,14 +203,15 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 			u.list.Refresh()
 			u.refreshSelectedProfileInfo()
 		})
-	})
+	}
 
-	removeBtn := widget.NewButton("删除", func() {
-		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+	removeCurrent := func() {
+		idx, ok := selectedIndex()
+		if !ok {
 			return
 		}
-		removed := u.cfg.Profiles[u.selectedIdx]
-		u.cfg.Profiles = append(u.cfg.Profiles[:u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1:]...)
+		removed := u.cfg.Profiles[idx]
+		u.cfg.Profiles = append(u.cfg.Profiles[:idx], u.cfg.Profiles[idx+1:]...)
 		if u.cfg.ActiveProfile == removed.Name {
 			u.cfg.ActiveProfile = ""
 		}
@@ -210,55 +220,103 @@ func (u *App) buildProfilesTab() fyne.CanvasObject {
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
-	})
+	}
 
-	upBtn := widget.NewButton("上移", func() {
-		if u.selectedIdx <= 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+	moveUpCurrent := func() {
+		idx, ok := selectedIndex()
+		if !ok {
 			return
 		}
-		u.cfg.Profiles[u.selectedIdx-1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx-1]
-		u.selectedIdx = u.selectedIdx - 1
+		if idx <= 0 {
+			dialog.ShowInformation("提示", "当前已在最上方", u.win)
+			return
+		}
+		u.cfg.Profiles[idx-1], u.cfg.Profiles[idx] = u.cfg.Profiles[idx], u.cfg.Profiles[idx-1]
+		u.selectedIdx = idx - 1
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
-	})
+	}
 
-	downBtn := widget.NewButton("下移", func() {
-		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles)-1 {
+	moveDownCurrent := func() {
+		idx, ok := selectedIndex()
+		if !ok {
 			return
 		}
-		u.cfg.Profiles[u.selectedIdx+1], u.cfg.Profiles[u.selectedIdx] = u.cfg.Profiles[u.selectedIdx], u.cfg.Profiles[u.selectedIdx+1]
-		u.selectedIdx = u.selectedIdx + 1
+		if idx >= len(u.cfg.Profiles)-1 {
+			dialog.ShowInformation("提示", "当前已在最下方", u.win)
+			return
+		}
+		u.cfg.Profiles[idx+1], u.cfg.Profiles[idx] = u.cfg.Profiles[idx], u.cfg.Profiles[idx+1]
+		u.selectedIdx = idx + 1
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
-	})
+	}
 
 	setActiveBtn := widget.NewButton("设为默认", func() {
-		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
+		idx, ok := selectedIndex()
+		if !ok {
 			return
 		}
-		u.cfg.ActiveProfile = u.cfg.Profiles[u.selectedIdx].Name
+		u.cfg.ActiveProfile = u.cfg.Profiles[idx].Name
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
 		u.list.Refresh()
 		u.refreshSelectedProfileInfo()
 	})
 
-	guide := widget.NewLabel("引导模式：\n1. 点击“引导添加”并选择本地 frpc 配置文件\n2. 点击“设为默认”\n3. 回到“状态”页点击“启动代理”")
+	startBtn := widget.NewButtonWithIcon("启动代理", theme.MediaPlayIcon(), func() {
+		u.mgr.StartAuto()
+	})
+
+	moreBtn := widget.NewButton("更多操作", func() {
+		var more dialog.Dialog
+		editBtn := widget.NewButton("编辑当前", func() {
+			if more != nil {
+				more.Hide()
+			}
+			editCurrent()
+		})
+		removeBtn := widget.NewButton("删除当前", func() {
+			if more != nil {
+				more.Hide()
+			}
+			removeCurrent()
+		})
+		upBtn := widget.NewButton("上移当前", func() {
+			if more != nil {
+				more.Hide()
+			}
+			moveUpCurrent()
+		})
+		downBtn := widget.NewButton("下移当前", func() {
+			if more != nil {
+				more.Hide()
+			}
+			moveDownCurrent()
+		})
+
+		tips := widget.NewLabel("低频操作入口：编辑 / 删除 / 排序")
+		tips.Wrapping = fyne.TextWrapWord
+		content := container.NewVBox(tips, editBtn, removeBtn, upBtn, downBtn)
+		more = dialog.NewCustom("更多操作", "关闭", content, u.win)
+		more.Resize(fyne.NewSize(360, 300))
+		more.Show()
+	})
+
+	guide := widget.NewLabel("傻瓜模式：\n1. 引导添加\n2. 设为默认\n3. 启动代理\n\n低频功能请点“更多操作”。")
 	guide.Wrapping = fyne.TextWrapWord
-	buttonsMain := container.NewGridWithColumns(2, addBtn, editBtn)
-	buttonsExtra := container.NewGridWithColumns(2, removeBtn, setActiveBtn)
-	buttonsOrder := container.NewGridWithColumns(2, upBtn, downBtn)
+	buttonsMain := container.NewGridWithColumns(3, addBtn, setActiveBtn, startBtn)
 	listCard := widget.NewCard("配置列表", "", u.list)
 	detailCard := widget.NewCard("配置摘要", "", container.NewVBox(u.selectedInfo, widget.NewSeparator(), guide))
 
-	left := container.NewVBox(listCard, buttonsMain, buttonsExtra, buttonsOrder)
+	left := container.NewVBox(listCard, buttonsMain, moreBtn)
 	right := container.NewVBox(detailCard)
 	split := container.NewHSplit(left, right)
-	split.SetOffset(0.56)
+	split.SetOffset(0.60)
 	return split
 }
 
