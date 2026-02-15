@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -21,12 +22,15 @@ import (
 	"frpcx/internal/frpc"
 )
 
+const singleProfileName = "default"
+
 type frpcForm struct {
 	ServerAddr string
 	ServerPort string
 	Token      string
-	ProxyName  string
+	ProxyType  string
 	LocalPort  string
+	Domain     string
 	RemotePort string
 }
 
@@ -45,9 +49,13 @@ type App struct {
 	serverAddrEntry *widget.Entry
 	serverPortEntry *widget.Entry
 	tokenEntry      *widget.Entry
-	proxyNameEntry  *widget.Entry
+	proxyTypeSelect *widget.Select
 	localPortEntry  *widget.Entry
+	domainEntry     *widget.Entry
 	remotePortEntry *widget.Entry
+
+	domainRow     fyne.CanvasObject
+	remotePortRow fyne.CanvasObject
 
 	autoSaveMu    sync.Mutex
 	autoSaveTimer *time.Timer
@@ -61,89 +69,121 @@ func Run(cfg *config.AppConfig) {
 	win := a.NewWindow("穿透助手")
 	mgr := frpc.NewManager(cfg)
 
-	u := &App{
-		app: a,
-		win: win,
-		cfg: cfg,
-		mgr: mgr,
-	}
-
+	u := &App{app: a, win: win, cfg: cfg, mgr: mgr}
 	u.build()
 	u.setupTray()
 	u.startStatusTicker()
 
-	win.Resize(fyne.NewSize(700, 460))
+	win.Resize(fyne.NewSize(700, 470))
 	win.ShowAndRun()
 }
 
 func (u *App) build() {
 	u.statusDot = canvas.NewText("●", statusColor("stopped"))
 	u.statusDot.TextSize = 16
-
-	u.profileLabel = widget.NewLabelWithStyle("未配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	u.hintLabel = widget.NewLabel("修改配置项后将自动保存为 TOML")
+	u.profileLabel = widget.NewLabelWithStyle(singleProfileName, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	u.hintLabel = widget.NewLabel("修改参数后自动保存")
 	u.errorLabel = widget.NewLabel("")
 
-	initial := u.loadFormFromCurrentProfile()
+	formData := u.loadFormFromCurrentProfile()
+
 	u.serverAddrEntry = widget.NewEntry()
 	u.serverPortEntry = widget.NewEntry()
 	u.tokenEntry = widget.NewPasswordEntry()
-	u.proxyNameEntry = widget.NewEntry()
 	u.localPortEntry = widget.NewEntry()
+	u.domainEntry = widget.NewEntry()
 	u.remotePortEntry = widget.NewEntry()
 
-	u.serverAddrEntry.SetPlaceHolder("服务器地址，例如 1.2.3.4")
-	u.serverPortEntry.SetPlaceHolder("服务器端口，例如 7000")
-	u.tokenEntry.SetPlaceHolder("Token（可选）")
-	u.proxyNameEntry.SetPlaceHolder("代理名称，例如 ssh")
-	u.localPortEntry.SetPlaceHolder("本地端口，例如 22")
-	u.remotePortEntry.SetPlaceHolder("远程端口，例如 6000")
+	u.proxyTypeSelect = widget.NewSelect([]string{"http", "tcp"}, func(string) {
+		u.updateProxyTypeUI()
+		u.scheduleAutoSave(u.readForm())
+	})
 
-	u.serverAddrEntry.SetText(initial.ServerAddr)
-	u.serverPortEntry.SetText(initial.ServerPort)
-	u.tokenEntry.SetText(initial.Token)
-	u.proxyNameEntry.SetText(initial.ProxyName)
-	u.localPortEntry.SetText(initial.LocalPort)
-	u.remotePortEntry.SetText(initial.RemotePort)
+	u.serverAddrEntry.SetPlaceHolder("例如 121.40.193.43")
+	u.serverPortEntry.SetPlaceHolder("例如 7000")
+	u.tokenEntry.SetPlaceHolder("可选")
+	u.localPortEntry.SetPlaceHolder("例如 8000")
+	u.domainEntry.SetPlaceHolder("例如 frp.iqei.cn")
+	u.remotePortEntry.SetPlaceHolder("TCP 时必填，例如 6000")
 
-	onChange := func(string) {
+	u.serverAddrEntry.SetText(formData.ServerAddr)
+	u.serverPortEntry.SetText(formData.ServerPort)
+	u.tokenEntry.SetText(formData.Token)
+	u.localPortEntry.SetText(formData.LocalPort)
+	u.domainEntry.SetText(formData.Domain)
+	u.remotePortEntry.SetText(formData.RemotePort)
+	u.proxyTypeSelect.SetSelected(formData.ProxyType)
+
+	tokenShown := false
+	var tokenToggle *widget.Button
+	tokenToggle = widget.NewButtonWithIcon("", theme.VisibilityIcon(), func() {
+		tokenShown = !tokenShown
+		u.tokenEntry.Password = !tokenShown
+		if tokenShown {
+			tokenToggle.SetIcon(theme.VisibilityOffIcon())
+		} else {
+			tokenToggle.SetIcon(theme.VisibilityIcon())
+		}
+		u.tokenEntry.Refresh()
+	})
+
+	onEntryChanged := func(string) {
 		u.scheduleAutoSave(u.readForm())
 	}
-	u.serverAddrEntry.OnChanged = onChange
-	u.serverPortEntry.OnChanged = onChange
-	u.tokenEntry.OnChanged = onChange
-	u.proxyNameEntry.OnChanged = onChange
-	u.localPortEntry.OnChanged = onChange
-	u.remotePortEntry.OnChanged = onChange
+	u.serverAddrEntry.OnChanged = onEntryChanged
+	u.serverPortEntry.OnChanged = onEntryChanged
+	u.tokenEntry.OnChanged = onEntryChanged
+	u.localPortEntry.OnChanged = onEntryChanged
+	u.domainEntry.OnChanged = onEntryChanged
+	u.remotePortEntry.OnChanged = onEntryChanged
 
-	u.logEntry = widget.NewMultiLineEntry()
-	u.logEntry.SetMinRowsVisible(3)
-	u.logEntry.Wrapping = fyne.TextWrapOff
-	u.logEntry.Disable()
+	rowServer := container.NewGridWithColumns(4,
+		widget.NewLabel("服务器"), u.serverAddrEntry,
+		widget.NewLabel("端口"), u.serverPortEntry,
+	)
+	tokenInput := container.NewBorder(nil, nil, nil, tokenToggle, u.tokenEntry)
+	rowToken := container.NewGridWithColumns(2, widget.NewLabel("Token"), tokenInput)
+	rowType := container.NewGridWithColumns(4,
+		widget.NewLabel("类型"), u.proxyTypeSelect,
+		widget.NewLabel("本地端口"), u.localPortEntry,
+	)
+	u.domainRow = container.NewGridWithColumns(2, widget.NewLabel("域名"), u.domainEntry)
+	u.remotePortRow = container.NewGridWithColumns(2, widget.NewLabel("远程端口"), u.remotePortEntry)
 
+	u.updateProxyTypeUI()
+
+	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), func() {
+		u.saveFormToGeneratedToml(u.readForm())
+	})
 	startBtn := widget.NewButtonWithIcon("启动", theme.MediaPlayIcon(), func() {
+		u.saveFormToGeneratedToml(u.readForm())
 		u.mgr.StartAuto()
 	})
 	stopBtn := widget.NewButtonWithIcon("停止", theme.MediaStopIcon(), func() {
 		u.mgr.Stop()
 	})
+	actionsRow := container.NewGridWithColumns(3, saveBtn, startBtn, stopBtn)
 
-	statusRow := container.NewHBox(u.statusDot, widget.NewLabel(" "), u.profileLabel)
-	form := &widget.Form{
-		Items: []*widget.FormItem{
-			{Text: "服务器地址", Widget: u.serverAddrEntry},
-			{Text: "服务器端口", Widget: u.serverPortEntry},
-			{Text: "Token", Widget: u.tokenEntry},
-			{Text: "代理名称", Widget: u.proxyNameEntry},
-			{Text: "本地端口", Widget: u.localPortEntry},
-			{Text: "远程端口", Widget: u.remotePortEntry},
-		},
-	}
-	actionsRow := container.NewGridWithColumns(2, startBtn, stopBtn)
+	u.logEntry = widget.NewMultiLineEntry()
+	u.logEntry.SetMinRowsVisible(3)
+	u.logEntry.Wrapping = fyne.TextWrapOff
+	u.logEntry.Disable()
 	logsCard := widget.NewCard("日志", "", u.logEntry)
 
-	u.refreshConfiguredProfileLabel()
-	u.win.SetContent(container.NewVBox(statusRow, form, u.hintLabel, u.errorLabel, actionsRow, logsCard))
+	statusRow := container.NewHBox(u.statusDot, widget.NewLabel(" "), u.profileLabel, layout.NewSpacer())
+	configCard := widget.NewCard("", "", container.NewVBox(rowServer, rowToken, rowType, u.domainRow, u.remotePortRow))
+
+	u.win.SetContent(container.NewVBox(statusRow, configCard, u.hintLabel, u.errorLabel, actionsRow, logsCard))
+}
+
+func (u *App) updateProxyTypeUI() {
+	if u.proxyTypeSelect.Selected == "tcp" {
+		u.domainRow.Hide()
+		u.remotePortRow.Show()
+		return
+	}
+	u.domainRow.Show()
+	u.remotePortRow.Hide()
 }
 
 func (u *App) readForm() frpcForm {
@@ -151,9 +191,22 @@ func (u *App) readForm() frpcForm {
 		ServerAddr: strings.TrimSpace(u.serverAddrEntry.Text),
 		ServerPort: strings.TrimSpace(u.serverPortEntry.Text),
 		Token:      strings.TrimSpace(u.tokenEntry.Text),
-		ProxyName:  strings.TrimSpace(u.proxyNameEntry.Text),
+		ProxyType:  strings.TrimSpace(u.proxyTypeSelect.Selected),
 		LocalPort:  strings.TrimSpace(u.localPortEntry.Text),
+		Domain:     strings.TrimSpace(u.domainEntry.Text),
 		RemotePort: strings.TrimSpace(u.remotePortEntry.Text),
+	}
+}
+
+func defaultForm() frpcForm {
+	return frpcForm{
+		ServerAddr: "121.40.193.43",
+		ServerPort: "7000",
+		Token:      "",
+		ProxyType:  "http",
+		LocalPort:  "8000",
+		Domain:     "frp.iqei.cn",
+		RemotePort: "6000",
 	}
 }
 
@@ -164,13 +217,15 @@ func (u *App) scheduleAutoSave(form frpcForm) {
 	if u.autoSaveTimer != nil {
 		u.autoSaveTimer.Stop()
 	}
-
 	u.autoSaveTimer = time.AfterFunc(500*time.Millisecond, func() {
 		u.saveFormToGeneratedToml(form)
 	})
 }
 
 func (u *App) saveFormToGeneratedToml(form frpcForm) {
+	u.autoSaveMu.Lock()
+	defer u.autoSaveMu.Unlock()
+
 	u.cfg.AutoSwitch = false
 	u.cfg.WebDAV = config.WebDAVConfig{}
 
@@ -179,10 +234,15 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		u.cfg.Profiles = nil
 		_ = config.Save(u.cfg)
 		u.mgr.SetConfig(u.cfg)
-		fyne.Do(func() {
-			u.hintLabel.SetText("配置已清空")
-			u.refreshConfiguredProfileLabel()
-		})
+		u.setHint("配置已清空")
+		return
+	}
+
+	if form.ProxyType == "" {
+		form.ProxyType = "http"
+	}
+	if form.ServerAddr == "" {
+		u.setHint("未保存：请填写服务器地址")
 		return
 	}
 
@@ -196,18 +256,20 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		u.setHint("未保存：本地端口无效")
 		return
 	}
-	remotePort, err := parsePort(form.RemotePort)
-	if err != nil {
-		u.setHint("未保存：远程端口无效")
-		return
-	}
-	if form.ServerAddr == "" {
-		u.setHint("未保存：请填写服务器地址")
-		return
-	}
-	if form.ProxyName == "" {
-		u.setHint("未保存：请填写代理名称")
-		return
+
+	domain := form.Domain
+	remotePort := 0
+	if form.ProxyType == "tcp" {
+		remotePort, err = parsePort(form.RemotePort)
+		if err != nil {
+			u.setHint("未保存：远程端口无效")
+			return
+		}
+	} else {
+		if domain == "" {
+			u.setHint("未保存：HTTP 模式请填写域名")
+			return
+		}
 	}
 
 	cfgPath, err := generatedConfigPath()
@@ -216,14 +278,15 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		return
 	}
 
-	content := buildFrpcToml(form.ServerAddr, serverPort, form.Token, form.ProxyName, localPort, remotePort)
+	content := buildFrpcToml(form.ServerAddr, serverPort, form.Token, singleProfileName, form.ProxyType, localPort, domain, remotePort)
 	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		u.setHint("未保存：写入 TOML 失败")
 		return
 	}
 
-	p := config.Profile{
-		Name:              form.ProxyName,
+	u.cfg.ActiveProfile = singleProfileName
+	u.cfg.Profiles = []config.Profile{{
+		Name:              singleProfileName,
 		Enabled:           true,
 		FrpcPath:          "",
 		ConfigPath:        cfgPath,
@@ -232,34 +295,22 @@ func (u *App) saveFormToGeneratedToml(form frpcForm) {
 		HealthTimeoutSec:  3,
 		StatusTimeoutSec:  0,
 		StatusIntervalSec: 0,
-	}
-
-	u.cfg.ActiveProfile = p.Name
-	u.cfg.Profiles = []config.Profile{p}
+	}}
 	if err := config.Save(u.cfg); err != nil {
 		u.setHint("未保存：写入应用配置失败")
 		return
 	}
 	u.mgr.SetConfig(u.cfg)
-
-	fyne.Do(func() {
-		u.hintLabel.SetText("已自动保存")
-		u.refreshConfiguredProfileLabel()
-	})
-}
-
-func (u *App) setHint(msg string) {
-	fyne.Do(func() {
-		u.hintLabel.SetText(msg)
-	})
+	u.setHint("已自动保存")
 }
 
 func isEmptyForm(form frpcForm) bool {
 	return form.ServerAddr == "" &&
 		form.ServerPort == "" &&
 		form.Token == "" &&
-		form.ProxyName == "" &&
+		form.ProxyType == "" &&
 		form.LocalPort == "" &&
+		form.Domain == "" &&
 		form.RemotePort == ""
 }
 
@@ -286,7 +337,7 @@ func generatedConfigPath() (string, error) {
 	return filepath.Join(out, "single.toml"), nil
 }
 
-func buildFrpcToml(serverAddr string, serverPort int, token, proxyName string, localPort, remotePort int) string {
+func buildFrpcToml(serverAddr string, serverPort int, token, proxyName, proxyType string, localPort int, domain string, remotePort int) string {
 	var b strings.Builder
 	b.WriteString("serverAddr = \"")
 	b.WriteString(escapeTomlString(serverAddr))
@@ -306,14 +357,24 @@ func buildFrpcToml(serverAddr string, serverPort int, token, proxyName string, l
 	b.WriteString("name = \"")
 	b.WriteString(escapeTomlString(proxyName))
 	b.WriteString("\"\n")
-	b.WriteString("type = \"tcp\"\n")
+	b.WriteString("type = \"")
+	b.WriteString(escapeTomlString(proxyType))
+	b.WriteString("\"\n")
 	b.WriteString("localIP = \"127.0.0.1\"\n")
 	b.WriteString("localPort = ")
 	b.WriteString(strconv.Itoa(localPort))
 	b.WriteString("\n")
-	b.WriteString("remotePort = ")
-	b.WriteString(strconv.Itoa(remotePort))
-	b.WriteString("\n")
+
+	if proxyType == "tcp" {
+		b.WriteString("remotePort = ")
+		b.WriteString(strconv.Itoa(remotePort))
+		b.WriteString("\n")
+	} else {
+		b.WriteString("customDomains = [\"")
+		b.WriteString(escapeTomlString(domain))
+		b.WriteString("\"]\n")
+	}
+
 	return b.String()
 }
 
@@ -324,17 +385,18 @@ func escapeTomlString(s string) string {
 }
 
 func (u *App) loadFormFromCurrentProfile() frpcForm {
+	out := defaultForm()
+
 	p := u.currentProfile()
 	if p == nil || strings.TrimSpace(p.ConfigPath) == "" {
-		return frpcForm{}
+		return out
 	}
 
 	b, err := os.ReadFile(p.ConfigPath)
 	if err != nil {
-		return frpcForm{}
+		return out
 	}
 
-	out := frpcForm{}
 	for _, raw := range strings.Split(string(b), "\n") {
 		key, val, ok := splitTomlKV(raw)
 		if !ok {
@@ -347,15 +409,20 @@ func (u *App) loadFormFromCurrentProfile() frpcForm {
 			out.ServerPort = normalizeIntText(val)
 		case "auth.token":
 			out.Token = unquoteTomlValue(val)
-		case "name":
-			if out.ProxyName == "" {
-				out.ProxyName = unquoteTomlValue(val)
-			}
+		case "type":
+			out.ProxyType = unquoteTomlValue(val)
 		case "localPort":
 			out.LocalPort = normalizeIntText(val)
 		case "remotePort":
 			out.RemotePort = normalizeIntText(val)
+		case "customDomains":
+			if d := parseFirstArrayString(val); d != "" {
+				out.Domain = d
+			}
 		}
+	}
+	if out.ProxyType == "" {
+		out.ProxyType = "http"
 	}
 	return out
 }
@@ -393,6 +460,19 @@ func normalizeIntText(v string) string {
 	return strconv.Itoa(n)
 }
 
+func parseFirstArrayString(v string) string {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "[") || !strings.HasSuffix(v, "]") {
+		return ""
+	}
+	inner := strings.TrimSpace(v[1 : len(v)-1])
+	if inner == "" {
+		return ""
+	}
+	first := strings.SplitN(inner, ",", 2)[0]
+	return unquoteTomlValue(strings.TrimSpace(first))
+}
+
 func (u *App) currentProfile() *config.Profile {
 	if len(u.cfg.Profiles) == 0 {
 		return nil
@@ -407,20 +487,6 @@ func (u *App) currentProfile() *config.Profile {
 	return &u.cfg.Profiles[0]
 }
 
-func (u *App) refreshConfiguredProfileLabel() {
-	p := u.currentProfile()
-	if p == nil {
-		u.profileLabel.SetText("未配置")
-		return
-	}
-
-	name := strings.TrimSpace(p.Name)
-	if name == "" {
-		name = "默认配置"
-	}
-	u.profileLabel.SetText(name)
-}
-
 func (u *App) startStatusTicker() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	go func() {
@@ -429,11 +495,6 @@ func (u *App) startStatusTicker() {
 			fyne.Do(func() {
 				u.statusDot.Color = statusColor(snap.Status)
 				u.statusDot.Refresh()
-				if snap.ProfileName == "" {
-					u.refreshConfiguredProfileLabel()
-				} else {
-					u.profileLabel.SetText(snap.ProfileName)
-				}
 				u.errorLabel.SetText(snap.LastError)
 				if len(snap.LogLines) > 0 {
 					u.logEntry.SetText(strings.Join(snap.LogLines, "\n"))
@@ -454,6 +515,12 @@ func (u *App) setupTray() {
 		menu := fyne.NewMenu("穿透助手", showItem, hideItem, startItem, stopItem, quitItem)
 		desk.SetSystemTrayMenu(menu)
 	}
+}
+
+func (u *App) setHint(msg string) {
+	fyne.Do(func() {
+		u.hintLabel.SetText(msg)
+	})
 }
 
 func normalizeSimpleConfig(cfg *config.AppConfig) {
@@ -481,6 +548,7 @@ func normalizeSimpleConfig(cfg *config.AppConfig) {
 	}
 
 	p := cfg.Profiles[idx]
+	p.Name = singleProfileName
 	p.Enabled = true
 	p.FrpcPath = ""
 	p.RequireStatus = false
@@ -491,12 +559,8 @@ func normalizeSimpleConfig(cfg *config.AppConfig) {
 	p.StatusTimeoutSec = 0
 	p.StatusIntervalSec = 0
 
-	if strings.TrimSpace(p.Name) == "" {
-		p.Name = "默认配置"
-	}
-
 	cfg.Profiles = []config.Profile{p}
-	cfg.ActiveProfile = p.Name
+	cfg.ActiveProfile = singleProfileName
 	_ = config.Save(cfg)
 }
 
