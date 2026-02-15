@@ -17,7 +17,7 @@ func ResolveBinaryPath(userPath string) (string, error) {
 
     name, data, ok := embeddedBinary()
     if !ok {
-        return defaultBinaryName(), nil
+        return "", fmt.Errorf("当前构建未内置 frpc，请下载带内置 frpc 的发布版本")
     }
 
     dir, err := config.CacheDir()
@@ -39,13 +39,6 @@ func ResolveBinaryPath(userPath string) (string, error) {
     }
 
     return dst, nil
-}
-
-func defaultBinaryName() string {
-    if runtime.GOOS == "windows" {
-        return "frpc.exe"
-    }
-    return "frpc"
 }
 
 func writeIfChanged(path string, data []byte) error {

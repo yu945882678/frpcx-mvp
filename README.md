@@ -4,20 +4,20 @@
 
 ## 功能
 - 单窗口轻量 UI + 系统托盘菜单
-- 单配置引导（只需选择一个本地 frpc 配置文件）
-- 一键保存并启动
+- 单配置输入（输入配置文件路径后自动保存）
+- 运行状态圆点展示（颜色区分状态）
 - 启动/停止与日志查看
 
 ## 说明
-- 目前依赖外部 `frpc` 二进制，可在界面中选填 `frpc 路径`，或保证系统 PATH 中可找到 `frpc`。
-- 配置文件保存在用户配置目录下：`frpcx/config.json`。
 - 当前版本仅保留单配置，不包含云同步、状态检查、多配置切换。
+- 仅使用内置 `frpc`，请使用 Release 产物（已启用 `with_embedded_frpc`）。
+- 配置文件保存在用户配置目录下：`frpcx/config.json`。
 
 ## 构建
 ```bash
 # 需要 Go 1.22+ 和 Fyne
 go mod tidy
-GOOS=darwin GOARCH=amd64 go build -o frpcx
+GOOS=darwin GOARCH=amd64 go build -tags with_embedded_frpc -o frpcx
 ```
 
 ## 运行
