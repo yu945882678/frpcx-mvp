@@ -11,63 +11,55 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-    "frpcx/internal/config"
-    "frpcx/internal/frpc"
-    "frpcx/internal/webdav"
+	"frpcx/internal/config"
+	"frpcx/internal/frpc"
 )
 
 type App struct {
-	app    fyne.App
-	win    fyne.Window
-	cfg    *config.AppConfig
-	mgr    *frpc.Manager
+	app fyne.App
+	win fyne.Window
+	cfg *config.AppConfig
+	mgr *frpc.Manager
 
 	statusLabel  *widget.Label
 	profileLabel *widget.Label
 	errorLabel   *widget.Label
-	healthLabel  *widget.Label
-	healthErr    *widget.Label
-	selectedInfo *widget.Label
 	logEntry     *widget.Entry
-	list         *widget.List
-	selectedIdx  int
 }
 
 func Run(cfg *config.AppConfig) {
+	normalizeSimpleConfig(cfg)
+
 	a := app.NewWithID("suidaohe")
 	a.Settings().SetTheme(newSuidaoTheme())
 	win := a.NewWindow("穿透助手")
 	mgr := frpc.NewManager(cfg)
 
-    ui := &App{
-        app:         a,
-        win:         win,
-        cfg:         cfg,
-        mgr:         mgr,
-        selectedIdx: -1,
-    }
+	u := &App{
+		app: a,
+		win: win,
+		cfg: cfg,
+		mgr: mgr,
+	}
 
-    ui.build()
-    ui.setupTray()
-    ui.startStatusTicker()
+	u.build()
+	u.setupTray()
+	u.startStatusTicker()
 
-	win.Resize(fyne.NewSize(740, 460))
+	win.Resize(fyne.NewSize(700, 420))
 	win.ShowAndRun()
 }
 
 func (u *App) build() {
 	u.statusLabel = widget.NewLabelWithStyle("已停止", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	u.profileLabel = widget.NewLabelWithStyle("-", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	u.profileLabel = widget.NewLabelWithStyle("未配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	u.errorLabel = widget.NewLabel("")
-	u.healthLabel = widget.NewLabelWithStyle("未知", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	u.healthErr = widget.NewLabel("")
 	u.logEntry = widget.NewMultiLineEntry()
-	u.logEntry.SetMinRowsVisible(5)
+	u.logEntry.SetMinRowsVisible(4)
 	u.logEntry.Wrapping = fyne.TextWrapOff
 	u.logEntry.Disable()
 
@@ -77,25 +69,9 @@ func (u *App) build() {
 	stopBtn := widget.NewButtonWithIcon("停止代理", theme.MediaStopIcon(), func() {
 		u.mgr.Stop()
 	})
-	syncBtn := widget.NewButtonWithIcon("同步配置", theme.ViewRefreshIcon(), func() {
-		u.syncWebDAV()
-	})
-	checkBtn := widget.NewButtonWithIcon("状态检查", theme.SearchIcon(), func() {
-		if err := u.mgr.CheckStatusNow(); err != nil {
-			dialog.ShowError(err, u.win)
-			return
-        }
-        dialog.ShowInformation("状态", "正常", u.win)
-    })
-	autoSwitch := widget.NewCheck("自动切换", func(v bool) {
-		u.cfg.AutoSwitch = v
-		u.mgr.SetConfig(u.cfg)
-		_ = config.Save(u.cfg)
-	})
-	autoSwitch.SetChecked(u.cfg.AutoSwitch)
 
 	title := widget.NewLabelWithStyle("穿透助手", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	subtitle := widget.NewLabel("三步使用：添加配置 -> 设为默认 -> 启动代理")
+	subtitle := widget.NewLabel("极简模式：只需配置一个 frpc 配置文件")
 	titleCard := widget.NewCard("", "", container.NewVBox(title, subtitle))
 
 	statusCard := widget.NewCard("运行状态", "", container.NewVBox(
@@ -108,478 +84,239 @@ func (u *App) build() {
 		widget.NewLabel("错误信息"),
 		u.errorLabel,
 	))
-	healthCard := widget.NewCard("健康检查", "", container.NewVBox(
-		u.healthLabel,
-		u.healthErr,
-	))
-	metrics := container.NewGridWithColumns(2, statusCard, healthCard)
 
-	actions := widget.NewCard("快捷操作", "", container.NewVBox(
-		container.NewGridWithColumns(2, startBtn, stopBtn),
-		container.NewGridWithColumns(2, syncBtn, checkBtn),
-		autoSwitch,
-	))
-
+	actionsCard := widget.NewCard("快捷操作", "", container.NewGridWithColumns(2, startBtn, stopBtn))
 	logsCard := widget.NewCard("日志", "", u.logEntry)
-	statusTab := container.NewVBox(titleCard, metrics, actions, logsCard)
+	statusTab := container.NewVBox(titleCard, statusCard, actionsCard, logsCard)
 
-	profilesTab := u.buildProfilesTab()
-	webdavTab := u.buildWebDAVTab()
-
+	configTab := u.buildSingleConfigTab()
 	tabs := container.NewAppTabs(
 		container.NewTabItem("状态", statusTab),
-		container.NewTabItem("配置", profilesTab),
-		container.NewTabItem("云同步", webdavTab),
+		container.NewTabItem("配置", configTab),
 	)
 
+	u.refreshConfiguredProfileLabel()
 	u.win.SetContent(tabs)
 }
 
-func (u *App) buildProfilesTab() fyne.CanvasObject {
-	u.selectedInfo = widget.NewLabel("请先点击“引导添加”，只需填写配置文件即可。")
-	u.selectedInfo.Wrapping = fyne.TextWrapWord
+func (u *App) buildSingleConfigTab() fyne.CanvasObject {
+	p := u.currentProfile()
 
-	u.list = widget.NewList(
-		func() int { return len(u.cfg.Profiles) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			if i < 0 || i >= len(u.cfg.Profiles) {
-				return
-			}
-			p := u.cfg.Profiles[i]
-			status := ""
-			if !p.Enabled {
-				status = "（已禁用）"
-			}
-			if u.cfg.ActiveProfile == p.Name {
-				status += " [默认]"
-			}
-			o.(*widget.Label).SetText(p.Name + status)
-		},
-	)
-
-	u.list.OnSelected = func(id widget.ListItemID) {
-		u.selectedIdx = id
-		u.refreshSelectedProfileInfo()
-	}
-
-	selectedIndex := func() (int, bool) {
-		if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-			dialog.ShowInformation("提示", "请先在左侧选择一个配置", u.win)
-			return 0, false
-		}
-		return u.selectedIdx, true
-	}
-
-	addBtn := widget.NewButton("引导添加", func() {
-		u.showProfileDialog("引导添加配置", nil, func(p config.Profile, setDefault bool) {
-			u.cfg.Profiles = append(u.cfg.Profiles, p)
-			if setDefault {
-				u.cfg.ActiveProfile = p.Name
-			}
-			_ = config.Save(u.cfg)
-			u.mgr.SetConfig(u.cfg)
-			u.list.Refresh()
-			u.refreshSelectedProfileInfo()
-		})
-	})
-
-	editCurrent := func() {
-		idx, ok := selectedIndex()
-		if !ok {
-			return
-		}
-		p := u.cfg.Profiles[idx]
-		u.showProfileDialog("编辑配置", &p, func(updated config.Profile, setDefault bool) {
-			u.cfg.Profiles[idx] = updated
-			if setDefault {
-				u.cfg.ActiveProfile = updated.Name
-			} else if u.cfg.ActiveProfile == p.Name {
-				// 默认配置重命名时保持默认指向新名称。
-				u.cfg.ActiveProfile = updated.Name
-			}
-			_ = config.Save(u.cfg)
-			u.mgr.SetConfig(u.cfg)
-			u.list.Refresh()
-			u.refreshSelectedProfileInfo()
-		})
-	}
-
-	removeCurrent := func() {
-		idx, ok := selectedIndex()
-		if !ok {
-			return
-		}
-		removed := u.cfg.Profiles[idx]
-		u.cfg.Profiles = append(u.cfg.Profiles[:idx], u.cfg.Profiles[idx+1:]...)
-		if u.cfg.ActiveProfile == removed.Name {
-			u.cfg.ActiveProfile = ""
-		}
-		u.selectedIdx = -1
-		_ = config.Save(u.cfg)
-		u.mgr.SetConfig(u.cfg)
-		u.list.Refresh()
-		u.refreshSelectedProfileInfo()
-	}
-
-	moveUpCurrent := func() {
-		idx, ok := selectedIndex()
-		if !ok {
-			return
-		}
-		if idx <= 0 {
-			dialog.ShowInformation("提示", "当前已在最上方", u.win)
-			return
-		}
-		u.cfg.Profiles[idx-1], u.cfg.Profiles[idx] = u.cfg.Profiles[idx], u.cfg.Profiles[idx-1]
-		u.selectedIdx = idx - 1
-		_ = config.Save(u.cfg)
-		u.mgr.SetConfig(u.cfg)
-		u.list.Refresh()
-		u.refreshSelectedProfileInfo()
-	}
-
-	moveDownCurrent := func() {
-		idx, ok := selectedIndex()
-		if !ok {
-			return
-		}
-		if idx >= len(u.cfg.Profiles)-1 {
-			dialog.ShowInformation("提示", "当前已在最下方", u.win)
-			return
-		}
-		u.cfg.Profiles[idx+1], u.cfg.Profiles[idx] = u.cfg.Profiles[idx], u.cfg.Profiles[idx+1]
-		u.selectedIdx = idx + 1
-		_ = config.Save(u.cfg)
-		u.mgr.SetConfig(u.cfg)
-		u.list.Refresh()
-		u.refreshSelectedProfileInfo()
-	}
-
-	setActiveBtn := widget.NewButton("设为默认", func() {
-		idx, ok := selectedIndex()
-		if !ok {
-			return
-		}
-		u.cfg.ActiveProfile = u.cfg.Profiles[idx].Name
-		_ = config.Save(u.cfg)
-		u.mgr.SetConfig(u.cfg)
-		u.list.Refresh()
-		u.refreshSelectedProfileInfo()
-	})
-
-	startBtn := widget.NewButtonWithIcon("启动代理", theme.MediaPlayIcon(), func() {
-		u.mgr.StartAuto()
-	})
-
-	moreBtn := widget.NewButton("更多操作", func() {
-		var more dialog.Dialog
-		editBtn := widget.NewButton("编辑当前", func() {
-			if more != nil {
-				more.Hide()
-			}
-			editCurrent()
-		})
-		removeBtn := widget.NewButton("删除当前", func() {
-			if more != nil {
-				more.Hide()
-			}
-			removeCurrent()
-		})
-		upBtn := widget.NewButton("上移当前", func() {
-			if more != nil {
-				more.Hide()
-			}
-			moveUpCurrent()
-		})
-		downBtn := widget.NewButton("下移当前", func() {
-			if more != nil {
-				more.Hide()
-			}
-			moveDownCurrent()
-		})
-
-		tips := widget.NewLabel("低频操作入口：编辑 / 删除 / 排序")
-		tips.Wrapping = fyne.TextWrapWord
-		content := container.NewVBox(tips, editBtn, removeBtn, upBtn, downBtn)
-		more = dialog.NewCustom("更多操作", "关闭", content, u.win)
-		more.Resize(fyne.NewSize(360, 300))
-		more.Show()
-	})
-
-	guide := widget.NewLabel("傻瓜模式：\n1. 引导添加\n2. 设为默认\n3. 启动代理\n\n低频功能请点“更多操作”。")
-	guide.Wrapping = fyne.TextWrapWord
-	buttonsMain := container.NewGridWithColumns(3, addBtn, setActiveBtn, startBtn)
-	listCard := widget.NewCard("配置列表", "", u.list)
-	detailCard := widget.NewCard("配置摘要", "", container.NewVBox(u.selectedInfo, widget.NewSeparator(), guide))
-
-	left := container.NewVBox(listCard, buttonsMain, moreBtn)
-	right := container.NewVBox(detailCard)
-	split := container.NewHSplit(left, right)
-	split.SetOffset(0.60)
-	return split
-}
-
-func (u *App) buildWebDAVTab() fyne.CanvasObject {
-	urlEntry := widget.NewEntry()
-	urlEntry.SetText(u.cfg.WebDAV.URL)
-	urlEntry.SetPlaceHolder("可选，例如 https://dav.jianguoyun.com/dav/")
-    userEntry := widget.NewEntry()
-    userEntry.SetText(u.cfg.WebDAV.Username)
-    userEntry.SetPlaceHolder("可选")
-    passEntry := widget.NewPasswordEntry()
-    passEntry.SetText(u.cfg.WebDAV.Password)
-    passEntry.SetPlaceHolder("可选")
-    baseEntry := widget.NewEntry()
-    baseEntry.SetText(u.cfg.WebDAV.RemoteBase)
-    baseEntry.SetPlaceHolder("可选，例如 /frpc")
-
-	saveBtn := widget.NewButtonWithIcon("保存设置", theme.DocumentSaveIcon(), func() {
-		u.cfg.WebDAV.URL = strings.TrimSpace(urlEntry.Text)
-		u.cfg.WebDAV.Username = strings.TrimSpace(userEntry.Text)
-		u.cfg.WebDAV.Password = passEntry.Text
-		u.cfg.WebDAV.RemoteBase = strings.TrimSpace(baseEntry.Text)
-		_ = config.Save(u.cfg)
-		u.mgr.SetConfig(u.cfg)
-	})
-
-	syncBtn := widget.NewButtonWithIcon("立即同步", theme.ViewRefreshIcon(), func() {
-		u.syncWebDAV()
-	})
-
-    form := &widget.Form{
-        Items: []*widget.FormItem{
-            {Text: "URL", Widget: urlEntry},
-            {Text: "用户名", Widget: userEntry},
-            {Text: "密码", Widget: passEntry},
-            {Text: "远程根目录", Widget: baseEntry},
-        },
-        SubmitText: "",
-        OnSubmit:   nil,
-    }
-
-	tips := widget.NewLabel("未配置 WebDAV 也可正常使用；配置后可从云端自动拉取 frpc 配置。")
-	tips.Wrapping = fyne.TextWrapWord
-
-	card := widget.NewCard("WebDAV 设置", "", form)
-	actions := container.NewGridWithColumns(2, saveBtn, syncBtn)
-	return container.NewVBox(card, tips, actions, layout.NewSpacer())
-}
-
-func (u *App) refreshSelectedProfileInfo() {
-	if u.selectedInfo == nil {
-		return
-	}
-	if u.selectedIdx < 0 || u.selectedIdx >= len(u.cfg.Profiles) {
-		u.selectedInfo.SetText("请先点击“引导添加”，只需填写配置文件即可。")
-		return
-	}
-	p := u.cfg.Profiles[u.selectedIdx]
-	lines := []string{
-		fmt.Sprintf("名称: %s", p.Name),
-		fmt.Sprintf("启用: %s", boolToText(p.Enabled)),
-	}
-	if u.cfg.ActiveProfile == p.Name {
-		lines = append(lines, "默认启动: 是")
-	} else {
-		lines = append(lines, "默认启动: 否")
-	}
-	if p.ConfigPath != "" {
-		lines = append(lines, fmt.Sprintf("配置文件: %s", p.ConfigPath))
-	} else {
-		lines = append(lines, "配置文件: 未设置")
-	}
-	if p.RequireStatus {
-		lines = append(lines, "状态检查: 已启用")
-	} else {
-		lines = append(lines, "状态检查: 未启用")
-	}
-	u.selectedInfo.SetText(strings.Join(lines, "\n"))
-}
-
-func (u *App) showProfileDialog(title string, existing *config.Profile, onSave func(config.Profile, bool)) {
-	name := widget.NewEntry()
-	enabled := widget.NewCheck("启用此配置", nil)
-	setDefault := widget.NewCheck("设为默认启动", nil)
 	configPath := widget.NewEntry()
+	configPath.SetPlaceHolder("必填：请选择 frpc 配置文件，例如 /path/to/frpc.toml")
 	frpcPath := widget.NewEntry()
-	remoteConfig := widget.NewEntry()
-	requireStatus := widget.NewCheck("启用健康检查（推荐）", nil)
-
-	name.SetPlaceHolder("可选，留空将自动按配置文件名生成")
-	configPath.SetPlaceHolder("必填，例如 /path/to/frpc.toml")
-	frpcPath.SetPlaceHolder("可选，留空使用内置或系统 frpc")
-	remoteConfig.SetPlaceHolder("可选，云端配置路径")
-
-	if existing != nil {
-		name.SetText(existing.Name)
-		enabled.SetChecked(existing.Enabled)
-		setDefault.SetChecked(u.cfg.ActiveProfile == existing.Name)
-		configPath.SetText(existing.ConfigPath)
-		frpcPath.SetText(existing.FrpcPath)
-		remoteConfig.SetText(existing.RemoteConfigPath)
-		requireStatus.SetChecked(existing.RequireStatus)
-	} else {
-		enabled.SetChecked(true)
-		setDefault.SetChecked(len(u.cfg.Profiles) == 0)
-		requireStatus.SetChecked(true)
+	frpcPath.SetPlaceHolder("可选：自定义 frpc 可执行文件路径")
+	if p != nil {
+		configPath.SetText(p.ConfigPath)
+		frpcPath.SetText(p.FrpcPath)
 	}
 
 	configRow := u.filePickerRow(configPath, storage.NewExtensionFileFilter([]string{".toml", ".ini", ".yaml", ".yml", ".json"}))
 	frpcRow := u.filePickerRow(frpcPath, nil)
-	tip := widget.NewLabel("只需要选择配置文件即可运行。其余设置保持默认即可。")
+
+	tip := widget.NewLabel("只保留一个配置：保存后会覆盖旧配置，直接用于启动。")
 	tip.Wrapping = fyne.TextWrapWord
 
-	basicForm := &widget.Form{
+	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "配置文件", Widget: configRow},
-			{Text: "名称", Widget: name},
-			{Text: "状态", Widget: enabled},
-			{Text: "默认", Widget: setDefault},
-		},
-	}
-
-	advancedForm := &widget.Form{
-		Items: []*widget.FormItem{
-			{Text: "健康检查", Widget: requireStatus},
 			{Text: "frpc 路径", Widget: frpcRow},
-			{Text: "云端路径", Widget: remoteConfig},
 		},
 	}
-	advanced := widget.NewAccordion(widget.NewAccordionItem("高级（可选）", advancedForm))
-	advanced.CloseAll()
 
-	content := container.NewVBox(tip, basicForm, advanced)
-	form := dialog.NewCustomConfirm(title, "保存", "取消", content, func(ok bool) {
-		if !ok {
-			return
-		}
+	save := func(startAfterSave bool) {
 		cfgPath := strings.TrimSpace(configPath.Text)
 		if cfgPath == "" {
 			dialog.ShowError(fmt.Errorf("请选择配置文件"), u.win)
 			return
 		}
 
-		var p config.Profile
-		if existing != nil {
-			p = *existing
-		} else {
-			p = config.Profile{
-				StartTimeoutSec:   8,
-				HealthTimeoutSec:  3,
-				StatusTimeoutSec:  10,
-				StatusIntervalSec: 5,
-			}
+		name := autoProfileName(cfgPath)
+		if name == "" {
+			name = "默认配置"
 		}
 
-		p.ConfigPath = cfgPath
-		p.Enabled = enabled.Checked
-		p.FrpcPath = strings.TrimSpace(frpcPath.Text)
-		p.RemoteConfigPath = strings.TrimSpace(remoteConfig.Text)
-		p.RequireStatus = requireStatus.Checked
-
-		n := strings.TrimSpace(name.Text)
-		if n == "" {
-			n = autoProfileName(cfgPath)
+		profile := config.Profile{
+			Name:              name,
+			Enabled:           true,
+			FrpcPath:          strings.TrimSpace(frpcPath.Text),
+			ConfigPath:        cfgPath,
+			RequireStatus:     false,
+			StartTimeoutSec:   8,
+			HealthTimeoutSec:  3,
+			StatusTimeoutSec:  10,
+			StatusIntervalSec: 5,
 		}
-		if n == "" {
-			dialog.ShowError(fmt.Errorf("名称不能为空"), u.win)
+
+		u.cfg.AutoSwitch = false
+		u.cfg.ActiveProfile = profile.Name
+		u.cfg.Profiles = []config.Profile{profile}
+		u.cfg.WebDAV = config.WebDAVConfig{}
+
+		_ = config.Save(u.cfg)
+		u.mgr.SetConfig(u.cfg)
+		u.refreshConfiguredProfileLabel()
+
+		if startAfterSave {
+			u.mgr.StartAuto()
+			dialog.ShowInformation("配置", "保存成功，已启动", u.win)
 			return
 		}
-		p.Name = n
+		dialog.ShowInformation("配置", "保存成功", u.win)
+	}
 
-		onSave(p, setDefault.Checked)
-	}, u.win)
-	form.Resize(fyne.NewSize(520, 420))
-	form.Show()
+	saveBtn := widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), func() {
+		save(false)
+	})
+	saveStartBtn := widget.NewButtonWithIcon("保存并启动", theme.MediaPlayIcon(), func() {
+		save(true)
+	})
+
+	actions := container.NewGridWithColumns(2, saveBtn, saveStartBtn)
+	card := widget.NewCard("单配置设置", "", container.NewVBox(tip, form, actions))
+	guide := widget.NewLabel("使用流程：1. 选配置文件 2. 保存 3. 回状态页查看运行")
+	guide.Wrapping = fyne.TextWrapWord
+
+	return container.NewVBox(card, guide)
+}
+
+func (u *App) currentProfile() *config.Profile {
+	if len(u.cfg.Profiles) == 0 {
+		return nil
+	}
+	if u.cfg.ActiveProfile != "" {
+		for i := range u.cfg.Profiles {
+			if u.cfg.Profiles[i].Name == u.cfg.ActiveProfile {
+				return &u.cfg.Profiles[i]
+			}
+		}
+	}
+	return &u.cfg.Profiles[0]
+}
+
+func (u *App) refreshConfiguredProfileLabel() {
+	p := u.currentProfile()
+	if p == nil {
+		u.profileLabel.SetText("未配置")
+		return
+	}
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = autoProfileName(p.ConfigPath)
+	}
+	if name == "" {
+		name = "默认配置"
+	}
+	u.profileLabel.SetText(name)
 }
 
 func (u *App) filePickerRow(entry *widget.Entry, filter storage.FileFilter) fyne.CanvasObject {
-    browse := widget.NewButton("浏览", func() {
-        dlg := dialog.NewFileOpen(func(uc fyne.URIReadCloser, err error) {
-            if err != nil {
-                dialog.ShowError(err, u.win)
-                return
-            }
-            if uc == nil {
-                return
-            }
-            entry.SetText(uc.URI().Path())
-            _ = uc.Close()
-        }, u.win)
-        if filter != nil {
-            dlg.SetFilter(filter)
-        }
-        dlg.Show()
-    })
-    return container.NewBorder(nil, nil, nil, browse, entry)
+	browse := widget.NewButton("浏览", func() {
+		dlg := dialog.NewFileOpen(func(uc fyne.URIReadCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, u.win)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			entry.SetText(uc.URI().Path())
+			_ = uc.Close()
+		}, u.win)
+		if filter != nil {
+			dlg.SetFilter(filter)
+		}
+		dlg.Show()
+	})
+	return container.NewBorder(nil, nil, nil, browse, entry)
 }
 
 func (u *App) startStatusTicker() {
-    ticker := time.NewTicker(500 * time.Millisecond)
-    go func() {
-        for range ticker.C {
-            snap := u.mgr.Status()
-            fyne.Do(func() {
-                u.statusLabel.SetText(localizeStatus(snap.Status))
-                if snap.ProfileName == "" {
-                    u.profileLabel.SetText("-")
-                } else {
-                    u.profileLabel.SetText(snap.ProfileName)
-                }
-                u.errorLabel.SetText(snap.LastError)
-                u.healthLabel.SetText(localizeHealth(snap.Health))
-                u.healthErr.SetText(snap.HealthError)
-                if len(snap.LogLines) > 0 {
-                    u.logEntry.SetText(strings.Join(snap.LogLines, "\n"))
-                }
-            })
-        }
-    }()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	go func() {
+		for range ticker.C {
+			snap := u.mgr.Status()
+			fyne.Do(func() {
+				u.statusLabel.SetText(localizeStatus(snap.Status))
+				if snap.ProfileName == "" {
+					u.refreshConfiguredProfileLabel()
+				} else {
+					u.profileLabel.SetText(snap.ProfileName)
+				}
+				u.errorLabel.SetText(snap.LastError)
+				if len(snap.LogLines) > 0 {
+					u.logEntry.SetText(strings.Join(snap.LogLines, "\n"))
+				}
+			})
+		}
+	}()
 }
 
 func (u *App) setupTray() {
-    if desk, ok := u.app.(desktop.App); ok {
-        showItem := fyne.NewMenuItem("显示", func() { u.win.Show() })
-        hideItem := fyne.NewMenuItem("隐藏", func() { u.win.Hide() })
-        startItem := fyne.NewMenuItem("启动", func() { u.mgr.StartAuto() })
-        stopItem := fyne.NewMenuItem("停止", func() { u.mgr.Stop() })
-        syncItem := fyne.NewMenuItem("同步", func() { u.syncWebDAV() })
-        quitItem := fyne.NewMenuItem("退出", func() { u.app.Quit() })
+	if desk, ok := u.app.(desktop.App); ok {
+		showItem := fyne.NewMenuItem("显示", func() { u.win.Show() })
+		hideItem := fyne.NewMenuItem("隐藏", func() { u.win.Hide() })
+		startItem := fyne.NewMenuItem("启动", func() { u.mgr.StartAuto() })
+		stopItem := fyne.NewMenuItem("停止", func() { u.mgr.Stop() })
+		quitItem := fyne.NewMenuItem("退出", func() { u.app.Quit() })
 
-        menu := fyne.NewMenu("穿透助手", showItem, hideItem, startItem, stopItem, syncItem, quitItem)
-        desk.SetSystemTrayMenu(menu)
-    }
-}
-
-func (u *App) syncWebDAV() {
-    updated, err := webdav.SyncProfiles(u.cfg)
-    if err != nil {
-        dialog.ShowError(err, u.win)
-        return
-    }
-    if len(updated) == 0 {
-        dialog.ShowInformation("WebDAV", "没有需要更新的配置", u.win)
-        return
-    }
-
-    for i := range u.cfg.Profiles {
-        if p, ok := updated[u.cfg.Profiles[i].Name]; ok {
-            if u.cfg.Profiles[i].ConfigPath == "" {
-                u.cfg.Profiles[i].ConfigPath = p
-            }
-        }
-    }
-    _ = config.Save(u.cfg)
-    u.mgr.SetConfig(u.cfg)
-	dialog.ShowInformation("WebDAV", "同步完成", u.win)
-}
-
-func boolToText(v bool) string {
-	if v {
-		return "是"
+		menu := fyne.NewMenu("穿透助手", showItem, hideItem, startItem, stopItem, quitItem)
+		desk.SetSystemTrayMenu(menu)
 	}
-	return "否"
+}
+
+func normalizeSimpleConfig(cfg *config.AppConfig) {
+	if cfg == nil {
+		return
+	}
+
+	cfg.AutoSwitch = false
+	cfg.WebDAV = config.WebDAVConfig{}
+
+	if len(cfg.Profiles) == 0 {
+		cfg.ActiveProfile = ""
+		_ = config.Save(cfg)
+		return
+	}
+
+	idx := 0
+	if cfg.ActiveProfile != "" {
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == cfg.ActiveProfile {
+				idx = i
+				break
+			}
+		}
+	} else {
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Enabled {
+				idx = i
+				break
+			}
+		}
+	}
+
+	p := cfg.Profiles[idx]
+	p.Enabled = true
+	p.RequireStatus = false
+	p.RemoteConfigPath = ""
+	p.ServerAddr = ""
+	p.ServerPort = 0
+	p.LocalCheckPorts = nil
+	p.StatusTimeoutSec = 0
+	p.StatusIntervalSec = 0
+
+	if strings.TrimSpace(p.Name) == "" {
+		name := autoProfileName(p.ConfigPath)
+		if name == "" {
+			name = "默认配置"
+		}
+		p.Name = name
+	}
+
+	cfg.Profiles = []config.Profile{p}
+	cfg.ActiveProfile = p.Name
+	_ = config.Save(cfg)
 }
 
 func autoProfileName(configPath string) string {
@@ -596,35 +333,16 @@ func autoProfileName(configPath string) string {
 }
 
 func localizeStatus(status string) string {
-    switch status {
-    case "starting":
-        return "启动中"
-    case "running":
-        return "运行中"
-    case "stopped":
-        return "已停止"
-    case "error":
-        return "异常"
-    default:
-        return status
-    }
-}
-
-func localizeHealth(health string) string {
-    switch health {
-    case "unknown":
-        return "未知"
-    case "checking":
-        return "检查中"
-    case "ok":
-        return "正常"
-    case "fail":
-        return "失败"
-    case "disabled":
-        return "未启用"
-    case "stopped":
-        return "已停止"
-    default:
-        return health
-    }
+	switch status {
+	case "starting":
+		return "启动中"
+	case "running":
+		return "运行中"
+	case "stopped":
+		return "已停止"
+	case "error":
+		return "异常"
+	default:
+		return status
+	}
 }

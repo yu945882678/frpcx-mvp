@@ -1,17 +1,17 @@
 # 穿透助手 (MVP)
 
-一个小巧的跨平台桌面 frpc 客户端，支持多配置自动切换与 WebDAV 同步。
+一个小巧的跨平台桌面 frpc 客户端，极简单配置模式。
 
 ## 功能
 - 单窗口轻量 UI + 系统托盘菜单
-- 多 Profile（按列表优先级）
-- 启动失败/运行退出自动切换下一个 Profile
-- WebDAV 同步（可用于坚果云）
+- 单配置引导（只需选择一个本地 frpc 配置文件）
+- 一键保存并启动
+- 启动/停止与日志查看
 
 ## 说明
-- 目前依赖外部 `frpc` 二进制，可在 Profile 中指定 `frpc Path`，或保证系统 PATH 中可找到 `frpc`。
+- 目前依赖外部 `frpc` 二进制，可在界面中选填 `frpc 路径`，或保证系统 PATH 中可找到 `frpc`。
 - 配置文件保存在用户配置目录下：`frpcx/config.json`。
-- WebDAV 同步会将远程配置下载到本地缓存：`frpcx/cache/`，并自动映射到 Profile。
+- 当前版本仅保留单配置，不包含云同步、状态检查、多配置切换。
 
 ## 构建
 ```bash
@@ -40,14 +40,3 @@ xattr -dr com.apple.quarantine /Applications/穿透助手.app
 ```bash
 go build -tags with_embedded_frpc -o frpcx
 ```
-
-## 自动切换逻辑
-- 预检查服务器可达（若设置了 server addr/port）
-- 预检查本地服务端口（若设置）
-- 启动 frpc 并解析日志错误模式
-- 进程退出/失败自动切换下一个 Profile
-
-## 状态健康检查
-- 可选：对每个 Profile 使用 `frpc status -c <config>` 验证管理端口可用性。
-- 需要在 frpc 配置中启用 `webServer`。
-- 启用后，启动阶段会等待 status 成功，运行期定时检查，连续失败会自动切换。
